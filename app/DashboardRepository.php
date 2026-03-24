@@ -1,0 +1,88 @@
+<?php
+
+declare(strict_types=1);
+
+final class DashboardRepository
+{
+    public function __construct(private PDO $pdo)
+    {
+    }
+
+    public function getTotals(): array
+    {
+        $totalSales = (float) $this->pdo->query('SELECT COALESCE(SUM(amount), 0) AS total FROM sales')->fetch()['total'];
+        $totalCustomers = (int) $this->pdo->query('SELECT COUNT(*) AS total FROM customers')->fetch()['total'];
+        $totalItems = (int) $this->pdo->query('SELECT COALESCE(SUM(stock_qty), 0) AS total FROM products')->fetch()['total'];
+
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) AS total FROM sales WHERE DATE(created_at) = CURDATE()');
+        $stmt->execute();
+        $transactionsToday = (int) $stmt->fetch()['total'];
+
+        return [
+            'totalSales' => $totalSales,
+            'totalCustomers' => $totalCustomers,
+            'totalItems' => $totalItems,
+            'transactionsToday' => $transactionsToday,
+        ];
+    }
+
+    public function getWeeklySales(): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT DATE(created_at) AS sale_date, SUM(amount) AS total
+             FROM sales
+             WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+             GROUP BY DATE(created_at)
+             ORDER BY sale_date ASC'
+        );
+        $stmt->execute();
+        $rows = $stmt->fetchAll();
+
+        $indexed = [];
+        foreach ($rows as $row) {
+            $indexed[$row['sale_date']] = (float) $row['total'];
+        }
+
+        $labels = [];
+        $values = [];
+
+        for ($i = 6; $i >= 0; $i--) {
+            $date = (new DateTimeImmutable('today'))->sub(new DateInterval('P' . $i . 'D'));
+            $key = $date->format('Y-m-d');
+            $labels[] = $date->format('d');
+            $values[] = $indexed[$key] ?? 0;
+        }
+
+        return [
+            'labels' => $labels,
+            'values' => $values,
+        ];
+    }
+
+    public function getLowStockSummary(): array
+    {
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) AS total FROM products WHERE stock_qty <= reorder_level');
+        $stmt->execute();
+        $count = (int) $stmt->fetch()['total'];
+
+        return [
+            'count' => $count,
+            'message' => $count > 0 ? $count . ' products need restocking.' : 'All products are well stocked.',
+        ];
+    }
+
+    public function getRecentSales(int $limit = 4): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT s.transaction_no, s.amount, s.payment_method, s.created_at, c.name AS customer_name
+             FROM sales s
+             JOIN customers c ON c.id = s.customer_id
+             ORDER BY s.created_at DESC
+             LIMIT :limit'
+        );
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+
+        return $stmt->fetchAll();
+    }
+}
