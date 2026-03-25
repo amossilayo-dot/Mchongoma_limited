@@ -37,6 +37,18 @@ require_once __DIR__ . '/../app/DashboardRepository.php';
 require_once __DIR__ . '/../app/InventoryRepository.php';
 require_once __DIR__ . '/../app/CustomerRepository.php';
 require_once __DIR__ . '/../app/SalesRepository.php';
+require_once __DIR__ . '/../app/SuppliersRepository.php';
+require_once __DIR__ . '/../app/EmployeesRepository.php';
+require_once __DIR__ . '/../app/ExpensesRepository.php';
+require_once __DIR__ . '/../app/InvoicesRepository.php';
+require_once __DIR__ . '/../app/DeliveriesRepository.php';
+require_once __DIR__ . '/../app/ReceivingRepository.php';
+require_once __DIR__ . '/../app/QuotationsRepository.php';
+require_once __DIR__ . '/../app/PurchaseOrdersRepository.php';
+require_once __DIR__ . '/../app/ReturnsRepository.php';
+require_once __DIR__ . '/../app/AppointmentsRepository.php';
+require_once __DIR__ . '/../app/LocationsRepository.php';
+require_once __DIR__ . '/../app/MessagesRepository.php';
 
 $pageController = new PageController();
 $currentPage = $pageController->getCurrentPage();
@@ -922,6 +934,415 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
                         <h3>Profit & Loss</h3>
                         <p>Revenue, expenses, and profit margins</p>
                     </article>
+                </div>
+            </section>
+
+        <?php elseif ($currentPage === 'suppliers'): ?>
+            <section class="page-content">
+                <div class="content-header">
+                    <h2><i class="fa-solid fa-truck"></i> Suppliers Management</h2>
+                    <button class="btn btn-primary" onclick="openAddSupplierModal()">
+                        <i class="fa-solid fa-plus"></i> Add Supplier
+                    </button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Name</th>
+                                <th>Contact</th>
+                                <th>Phone</th>
+                                <th>Email</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="7" style="text-align:center; padding: 20px;">
+                                    <i class="fa-solid fa-box-open"></i> No suppliers added yet
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        <?php elseif ($currentPage === 'employees'): ?>
+            <section class="page-content">
+                <div class="content-header">
+                    <h2><i class="fa-solid fa-users"></i> Employees Management</h2>
+                    <button class="btn btn-primary" onclick="openAddEmployeeModal()">
+                        <i class="fa-solid fa-plus"></i> Add Employee
+                    </button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Name</th>
+                                <th>Position</th>
+                                <th>Phone</th>
+                                <th>Email</th>
+                                <th>Salary</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="8" style="text-align:center; padding: 20px;">
+                                    <i class="fa-solid fa-users-slash"></i> No employees added yet
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        <?php elseif ($currentPage === 'expenses'): ?>
+            <section class="page-content">
+                <div class="content-header">
+                    <h2><i class="fa-solid fa-credit-card"></i> Expenses Management</h2>
+                    <button class="btn btn-primary" onclick="openAddExpenseModal()">
+                        <i class="fa-solid fa-plus"></i> Add Expense
+                    </button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Description</th>
+                                <th>Category</th>
+                                <th>Amount</th>
+                                <th>Status</th>
+                                <th>Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="7" style="text-align:center; padding: 20px;">
+                                    <i class="fa-solid fa-receipt"></i> No expenses recorded yet
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        <?php elseif ($currentPage === 'invoices'): ?>
+            <section class="page-content">
+                <div class="content-header">
+                    <h2><i class="fa-solid fa-file-lines"></i> Invoices Management</h2>
+                    <button class="btn btn-primary" onclick="openAddInvoiceModal()">
+                        <i class="fa-solid fa-plus"></i> Create Invoice
+                    </button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Invoice No</th>
+                                <th>Customer</th>
+                                <th>Amount</th>
+                                <th>Status</th>
+                                <th>Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="6" style="text-align:center; padding: 20px;">
+                                    <i class="fa-solid fa-inbox"></i> No invoices created yet
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        <?php elseif ($currentPage === 'deliveries'): ?>
+            <section class="page-content">
+                <div class="content-header">
+                    <h2><i class="fa-solid fa-boxes-stacked"></i> Deliveries Management</h2>
+                    <button class="btn btn-primary" onclick="openAddDeliveryModal()">
+                        <i class="fa-solid fa-plus"></i> Add Delivery
+                    </button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Delivery No</th>
+                                <th>Customer</th>
+                                <th>Amount</th>
+                                <th>Status</th>
+                                <th>Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="6" style="text-align:center; padding: 20px;">
+                                    <i class="fa-solid fa-truck"></i> No deliveries recorded yet
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        <?php elseif ($currentPage === 'receiving'): ?>
+            <section class="page-content">
+                <div class="content-header">
+                    <h2><i class="fa-solid fa-box"></i> Receiving Management</h2>
+                    <button class="btn btn-primary" onclick="openAddReceivingModal()">
+                        <i class="fa-solid fa-plus"></i> Add Receiving
+                    </button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Receiving No</th>
+                                <th>Supplier</th>
+                                <th>Amount</th>
+                                <th>Status</th>
+                                <th>Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="6" style="text-align:center; padding: 20px;">
+                                    <i class="fa-solid fa-inbox"></i> No receiving records yet
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        <?php elseif ($currentPage === 'quotations'): ?>
+            <section class="page-content">
+                <div class="content-header">
+                    <h2><i class="fa-solid fa-rectangle-list"></i> Quotations Management</h2>
+                    <button class="btn btn-primary" onclick="openAddQuotationModal()">
+                        <i class="fa-solid fa-plus"></i> Create Quotation
+                    </button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Quotation No</th>
+                                <th>Customer</th>
+                                <th>Amount</th>
+                                <th>Status</th>
+                                <th>Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="6" style="text-align:center; padding: 20px;">
+                                    <i class="fa-solid fa-rectangle-list"></i> No quotations created yet
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        <?php elseif ($currentPage === 'purchase-orders'): ?>
+            <section class="page-content">
+                <div class="content-header">
+                    <h2><i class="fa-solid fa-cart-plus"></i> Purchase Orders Management</h2>
+                    <button class="btn btn-primary" onclick="openAddPOModal()">
+                        <i class="fa-solid fa-plus"></i> Create PO
+                    </button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>PO No</th>
+                                <th>Supplier</th>
+                                <th>Amount</th>
+                                <th>Status</th>
+                                <th>Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="6" style="text-align:center; padding: 20px;">
+                                    <i class="fa-solid fa-cart"></i> No purchase orders created yet
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        <?php elseif ($currentPage === 'returns'): ?>
+            <section class="page-content">
+                <div class="content-header">
+                    <h2><i class="fa-solid fa-rotate-left"></i> Returns Management</h2>
+                    <button class="btn btn-primary" onclick="openAddReturnModal()">
+                        <i class="fa-solid fa-plus"></i> Add Return
+                    </button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Return No</th>
+                                <th>Product</th>
+                                <th>Quantity</th>
+                                <th>Reason</th>
+                                <th>Status</th>
+                                <th>Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="7" style="text-align:center; padding: 20px;">
+                                    <i class="fa-solid fa-inbox"></i> No returns recorded yet
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        <?php elseif ($currentPage === 'appointments'): ?>
+            <section class="page-content">
+                <div class="content-header">
+                    <h2><i class="fa-solid fa-calendar"></i> Appointments Management</h2>
+                    <button class="btn btn-primary" onclick="openAddAppointmentModal()">
+                        <i class="fa-solid fa-plus"></i> Schedule Appointment
+                    </button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Title</th>
+                                <th>Customer</th>
+                                <th>Date</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="6" style="text-align:center; padding: 20px;">
+                                    <i class="fa-solid fa-calendar-xmark"></i> No appointments scheduled yet
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        <?php elseif ($currentPage === 'locations'): ?>
+            <section class="page-content">
+                <div class="content-header">
+                    <h2><i class="fa-solid fa-location-dot"></i> Store Locations</h2>
+                    <button class="btn btn-primary" onclick="openAddLocationModal()">
+                        <i class="fa-solid fa-plus"></i> Add Location
+                    </button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Name</th>
+                                <th>Address</th>
+                                <th>City</th>
+                                <th>Phone</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="7" style="text-align:center; padding: 20px;">
+                                    <i class="fa-solid fa-map"></i> No locations added yet
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        <?php elseif ($currentPage === 'messages'): ?>
+            <section class="page-content">
+                <div class="content-header">
+                    <h2><i class="fa-solid fa-message"></i> Messages</h2>
+                    <button class="btn btn-primary" onclick="openComposeMessageModal()">
+                        <i class="fa-solid fa-pen-to-square"></i> New Message
+                    </button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>From</th>
+                                <th>To</th>
+                                <th>Subject</th>
+                                <th>Date</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td colspan="6" style="text-align:center; padding: 20px;">
+                                    <i class="fa-solid fa-inbox"></i> No messages yet
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        <?php elseif ($currentPage === 'settings'): ?>
+            <section class="page-content">
+                <div class="content-header">
+                    <h2><i class="fa-solid fa-gear"></i> Store Configuration</h2>
+                </div>
+                <div class="settings-container">
+                    <div class="settings-panel">
+                        <h3>Basic Settings</h3>
+                        <form>
+                            <div class="form-group">
+                                <label>Store Name</label>
+                                <input type="text" placeholder="Enter store name" class="form-control">
+                            </div>
+                            <div class="form-group">
+                                <label>Store Email</label>
+                                <input type="email" placeholder="Enter store email" class="form-control">
+                            </div>
+                            <div class="form-group">
+                                <label>Store Phone</label>
+                                <input type="tel" placeholder="Enter store phone" class="form-control">
+                            </div>
+                            <div class="form-group">
+                                <label>Store Address</label>
+                                <textarea placeholder="Enter store address" class="form-control" rows="3"></textarea>
+                            </div>
+                            <button type="button" class="btn btn-primary">Save Settings</button>
+                        </form>
+                    </div>
                 </div>
             </section>
 
