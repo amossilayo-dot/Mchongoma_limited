@@ -1515,7 +1515,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                             <input type="text" id="salesSearch" placeholder="Search transactions..." onkeyup="filterTable('salesTable', this.value)">
                         </div>
                         <div class="table-filters">
-                            <select>
+                            <select onchange="filterByPayment('salesTable', this.value)">
                                 <option value="all">All Payments</option>
                                 <option value="cash">Cash</option>
                                 <option value="mobile">Mobile Money</option>
@@ -1536,7 +1536,11 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                         </thead>
                         <tbody>
                             <?php foreach ($allSales as $sale): ?>
-                                <tr>
+                                <?php
+                                    $paymentMethodRaw = strtolower(trim((string) ($sale['payment_method'] ?? '')));
+                                    $paymentMethodValue = str_replace(' ', '_', $paymentMethodRaw);
+                                ?>
+                                <tr data-payment="<?= e($paymentMethodValue) ?>">
                                     <td><code><?= e($sale['transaction_no']) ?></code></td>
                                     <td><?= e($sale['customer_name']) ?></td>
                                     <td><strong>Tsh <?= moneyFormat((float) $sale['amount']) ?></strong></td>

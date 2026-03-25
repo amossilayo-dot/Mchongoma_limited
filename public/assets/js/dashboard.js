@@ -1507,6 +1507,29 @@ function filterByStock(value) {
     });
 }
 
+function filterByPayment(tableId, value) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+
+    const rows = table.querySelectorAll('tbody tr');
+    const selected = (value || 'all').toLowerCase();
+
+    rows.forEach(row => {
+        const payment = (row.dataset.payment || '').toLowerCase();
+        if (selected === 'all') {
+            row.style.display = '';
+            return;
+        }
+
+        if (selected === 'mobile') {
+            row.style.display = payment.includes('mobile') ? '' : 'none';
+            return;
+        }
+
+        row.style.display = payment.includes(selected) ? '' : 'none';
+    });
+}
+
 // ============================================
 // CRUD OPERATIONS (Demo - shows toast)
 // ============================================
