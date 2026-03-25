@@ -47,39 +47,62 @@ function getDatabaseConnection(): PDO
         );
     }
 
-    $dsn = sprintf('mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4', $host, $port, $database);
-
     $options = [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES => false,
     ];
 
-    try {
-        return new PDO($dsn, $username, $password, $options);
-    } catch (PDOException $exception) {
-        // Log full error for debugging but don't expose details to users
-        error_log('Database connection failed: ' . $exception->getMessage());
+    $attempts = [
+        ['host' => $host, 'port' => $port],
+    ];
 
-        // In production, hide sensitive connection details
-        if (isProductionEnvironment()) {
-            throw new RuntimeException(
-                'Database connection failed. Please contact the administrator.',
-                0,
-                $exception
-            );
+    // Some local Windows/XAMPP setups fail on 127.0.0.1 TCP but work on localhost/socket.
+    if ($host === '127.0.0.1') {
+        $attempts[] = ['host' => 'localhost', 'port' => $port];
+        $attempts[] = ['host' => 'localhost', 'port' => null];
+    }
+
+    $lastException = null;
+
+    foreach ($attempts as $attempt) {
+        $dsn = sprintf('mysql:host=%s;', $attempt['host']);
+        if ($attempt['port'] !== null && $attempt['port'] !== '') {
+            $dsn .= sprintf('port=%s;', (string) $attempt['port']);
         }
+        $dsn .= sprintf('dbname=%s;charset=utf8mb4', $database);
 
-        // In development, provide helpful debugging info (but still hide password)
+        try {
+            return new PDO($dsn, $username, $password, $options);
+        } catch (PDOException $exception) {
+            $lastException = $exception;
+            continue;
+        }
+    }
+
+    // Log full error for debugging but don't expose details to users
+    if ($lastException instanceof PDOException) {
+        error_log('Database connection failed: ' . $lastException->getMessage());
+    }
+
+    // In production, hide sensitive connection details
+    if (isProductionEnvironment()) {
         throw new RuntimeException(
-            sprintf(
-                'Database connection failed for %s:%s/%s. Check MySQL service and credentials. See error log for details.',
-                $host,
-                $port,
-                $database
-            ),
+            'Database connection failed. Please contact the administrator.',
             0,
-            $exception
+            $lastException
         );
     }
+
+    // In development, provide helpful debugging info (but still hide password)
+    throw new RuntimeException(
+        sprintf(
+            'Database connection failed for %s:%s/%s. Check MySQL service and credentials. See error log for details.',
+            $host,
+            $port,
+            $database
+        ),
+        0,
+        $lastException
+    );
 }
