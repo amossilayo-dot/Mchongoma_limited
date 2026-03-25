@@ -42,25 +42,47 @@ final class CustomerRepository
 
     public function createCustomer(array $data): int
     {
+        // Validate required fields
+        $name = trim($data['name'] ?? '');
+        if ($name === '' || strlen($name) > 255) {
+            throw new InvalidArgumentException('Customer name is required and must be 255 characters or less');
+        }
+
+        $phone = isset($data['phone']) ? trim($data['phone']) : null;
+        if ($phone !== null && $phone !== '' && !preg_match('/^[\d\s\-\+\(\)]{5,20}$/', $phone)) {
+            throw new InvalidArgumentException('Invalid phone number format');
+        }
+
         $stmt = $this->pdo->prepare(
             'INSERT INTO customers (name, phone) VALUES (:name, :phone)'
         );
         $stmt->execute([
-            ':name' => $data['name'],
-            ':phone' => $data['phone'] ?? null,
+            ':name' => $name,
+            ':phone' => $phone ?: null,
         ]);
         return (int) $this->pdo->lastInsertId();
     }
 
     public function updateCustomer(int $id, array $data): bool
     {
+        // Validate required fields
+        $name = trim($data['name'] ?? '');
+        if ($name === '' || strlen($name) > 255) {
+            throw new InvalidArgumentException('Customer name is required and must be 255 characters or less');
+        }
+
+        $phone = isset($data['phone']) ? trim($data['phone']) : null;
+        if ($phone !== null && $phone !== '' && !preg_match('/^[\d\s\-\+\(\)]{5,20}$/', $phone)) {
+            throw new InvalidArgumentException('Invalid phone number format');
+        }
+
         $stmt = $this->pdo->prepare(
             'UPDATE customers SET name = :name, phone = :phone WHERE id = :id'
         );
         return $stmt->execute([
             ':id' => $id,
-            ':name' => $data['name'],
-            ':phone' => $data['phone'] ?? null,
+            ':name' => $name,
+            ':phone' => $phone ?: null,
         ]);
     }
 

@@ -59,16 +59,31 @@ final class SalesRepository
 
     public function createSale(array $data): int
     {
-        $transactionNo = 'TXN-' . date('Ymd-His') . rand(100, 999) . '-' . rand(100, 999);
+        // Validate required fields
+        if (empty($data['customer_id']) || !is_numeric($data['customer_id'])) {
+            throw new InvalidArgumentException('Valid customer_id is required');
+        }
+        if (!isset($data['amount']) || !is_numeric($data['amount']) || $data['amount'] < 0) {
+            throw new InvalidArgumentException('Valid positive amount is required');
+        }
+
+        $allowedPaymentMethods = ['Cash', 'Mobile Money', 'Card', 'Bank Transfer'];
+        $paymentMethod = $data['payment_method'] ?? 'Cash';
+        if (!in_array($paymentMethod, $allowedPaymentMethods, true)) {
+            $paymentMethod = 'Cash';
+        }
+
+        // Use cryptographically secure random_int instead of rand
+        $transactionNo = 'TXN-' . date('Ymd-His') . random_int(100, 999) . '-' . random_int(100, 999);
         $stmt = $this->pdo->prepare(
             'INSERT INTO sales (transaction_no, customer_id, amount, payment_method, created_at)
              VALUES (:transaction_no, :customer_id, :amount, :payment_method, NOW())'
         );
         $stmt->execute([
             ':transaction_no' => $transactionNo,
-            ':customer_id' => $data['customer_id'],
-            ':amount' => $data['amount'],
-            ':payment_method' => $data['payment_method'] ?? 'Cash',
+            ':customer_id' => (int) $data['customer_id'],
+            ':amount' => (float) $data['amount'],
+            ':payment_method' => $paymentMethod,
         ]);
         return (int) $this->pdo->lastInsertId();
     }

@@ -4,6 +4,27 @@
  */
 
 // ============================================
+// SECURITY UTILITIES
+// ============================================
+
+/**
+ * Escape HTML entities to prevent XSS attacks
+ */
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    const div = document.createElement('div');
+    div.textContent = String(str);
+    return div.innerHTML;
+}
+
+/**
+ * Validate that a string contains only safe characters for IDs/transaction numbers
+ */
+function isValidIdentifier(str) {
+    return /^[A-Za-z0-9\-_]+$/.test(str);
+}
+
+// ============================================
 // INITIALIZATION
 // ============================================
 
@@ -192,10 +213,64 @@ function openModal(title, content, buttons = []) {
     modalTitle.textContent = title;
     modalBody.innerHTML = content;
 
-    // Generate buttons
-    modalFooter.innerHTML = buttons.map(btn =>
-        `<button class="btn ${btn.class || 'btn-secondary'}" onclick="${btn.onclick || 'closeModal()'}">${btn.text}</button>`
-    ).join('');
+    // Generate buttons safely using DOM manipulation
+    modalFooter.innerHTML = '';
+    buttons.forEach(btn => {
+        const button = document.createElement('button');
+        button.className = `btn ${btn.class || 'btn-secondary'}`;
+        button.textContent = btn.text;
+
+        // Use event listener instead of inline onclick for security
+        if (typeof btn.handler === 'function') {
+            button.addEventListener('click', btn.handler);
+        } else if (btn.onclick) {
+            // For legacy onclick strings, use a safe evaluation approach
+            button.addEventListener('click', function() {
+                // Only allow known safe function calls
+                const safeActions = {
+                    'closeModal()': closeModal,
+                    'printReport()': printReport,
+                    'logout()': logout,
+                };
+                if (safeActions[btn.onclick]) {
+                    safeActions[btn.onclick]();
+                } else if (btn.onclick.startsWith('closeModal();')) {
+                    closeModal();
+                    // Handle chained calls like "closeModal(); showToast(...)"
+                    const remainder = btn.onclick.replace('closeModal();', '').trim();
+                    if (remainder.startsWith('showToast(')) {
+                        const match = remainder.match(/showToast\s*\(\s*["'](\w+)["']\s*,\s*["']([^"']+)["']\s*\)/);
+                        if (match) {
+                            showToast(match[1], match[2]);
+                        }
+                    } else if (remainder.startsWith('window.location')) {
+                        // Handle safe redirects
+                        const urlMatch = remainder.match(/window\.location\s*=\s*['"](\?page=\w+)['"]/);
+                        if (urlMatch && /^\?page=\w+$/.test(urlMatch[1])) {
+                            window.location = urlMatch[1];
+                        }
+                    }
+                } else if (btn.onclick.startsWith('document.getElementById')) {
+                    // Handle form submission
+                    const match = btn.onclick.match(/document\.getElementById\s*\(\s*["'](\w+)["']\s*\)\.requestSubmit\s*\(\s*\)/);
+                    if (match) {
+                        const form = document.getElementById(match[1]);
+                        if (form) form.requestSubmit();
+                    }
+                } else if (btn.onclick.startsWith('confirmDeleteProduct(')) {
+                    const match = btn.onclick.match(/confirmDeleteProduct\s*\(\s*(\d+)\s*\)/);
+                    if (match) confirmDeleteProduct(parseInt(match[1], 10));
+                } else if (btn.onclick.startsWith('printReceipt(')) {
+                    const match = btn.onclick.match(/printReceipt\s*\(\s*["']([A-Za-z0-9\-_]+)["']\s*\)/);
+                    if (match) printReceipt(match[1]);
+                }
+            });
+        } else {
+            button.addEventListener('click', closeModal);
+        }
+
+        modalFooter.appendChild(button);
+    });
 
     overlay.classList.add('active');
     modal.classList.add('active');
@@ -322,7 +397,7 @@ function showAddProductModal() {
 }
 
 function showImportProductsModal() {
-    const csrfToken = window.csrfToken || '';
+    const csrfToken = escapeHtml(window.csrfToken || '');
 
     const content = `
         <form id="importProductsForm" action="?page=inventory" method="POST" enctype="multipart/form-data">
@@ -472,10 +547,15 @@ function showToast(type, message) {
         warning: 'fa-exclamation-triangle'
     };
 
-    toast.innerHTML = `
-        <i class="fa-solid ${icons[type]}"></i>
-        <span>${message}</span>
-    `;
+    // Create elements safely to prevent XSS
+    const icon = document.createElement('i');
+    icon.className = `fa-solid ${icons[type] || 'fa-info-circle'}`;
+
+    const span = document.createElement('span');
+    span.textContent = message; // Safe: textContent escapes HTML
+
+    toast.appendChild(icon);
+    toast.appendChild(span);
 
     container.appendChild(toast);
 
@@ -588,16 +668,23 @@ function deleteCustomer(id) {
 }
 
 function viewReceipt(transactionNo) {
+    // Validate transaction number format to prevent XSS
+    if (!isValidIdentifier(transactionNo)) {
+        showToast('error', 'Invalid transaction number');
+        return;
+    }
+
+    const safeTransactionNo = escapeHtml(transactionNo);
     const content = `
         <div class="receipt" style="text-align: center; padding: 20px; background: #F9FAFB; border-radius: 8px;">
             <h4 style="margin: 0 0 8px 0;">Mchongoma Limited</h4>
-            <p style="font-size: 12px; color: #6B7280; margin: 0 0 16px 0;">Transaction: ${transactionNo}</p>
+            <p style="font-size: 12px; color: #6B7280; margin: 0 0 16px 0;">Transaction: ${safeTransactionNo}</p>
             <hr style="border: none; border-top: 1px dashed #D1D5DB; margin: 16px 0;">
             <p style="font-size: 13px; margin: 0;">Receipt details would appear here</p>
         </div>
     `;
     openModal('Receipt', content, [
-        { text: 'Print', class: 'btn-secondary', onclick: 'printReceipt("' + transactionNo + '")' },
+        { text: 'Print', class: 'btn-secondary', onclick: `printReceipt("${safeTransactionNo}")` },
         { text: 'Close', class: 'btn-primary', onclick: 'closeModal()' }
     ]);
 }

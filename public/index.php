@@ -2,8 +2,33 @@
 
 declare(strict_types=1);
 
+// Security headers
+header('X-Content-Type-Options: nosniff');
+header('X-Frame-Options: SAMEORIGIN');
+header('X-XSS-Protection: 1; mode=block');
+header('Referrer-Policy: strict-origin-when-cross-origin');
+header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com; img-src 'self' data:; connect-src 'self'");
+
+// Secure session configuration
 if (session_status() === PHP_SESSION_NONE) {
+    $isSecure = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on';
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path' => '/',
+        'domain' => '',
+        'secure' => $isSecure,
+        'httponly' => true,
+        'samesite' => 'Strict',
+    ]);
     session_start();
+
+    // Regenerate session ID periodically to prevent fixation
+    if (!isset($_SESSION['_created'])) {
+        $_SESSION['_created'] = time();
+    } elseif (time() - $_SESSION['_created'] > 1800) {
+        session_regenerate_id(true);
+        $_SESSION['_created'] = time();
+    }
 }
 
 require_once __DIR__ . '/../config/database.php';
@@ -393,6 +418,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
     if (class_exists('finfo')) {
         $finfo = new finfo(FILEINFO_MIME_TYPE);
         $mimeType = (string) ($finfo->file($tmpName) ?: '');
+        unset($finfo);
     }
 
     $allowedMimeTypes = [

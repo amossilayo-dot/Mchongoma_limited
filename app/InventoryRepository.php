@@ -38,33 +38,85 @@ final class InventoryRepository
 
     public function createProduct(array $data): int
     {
+        // Validate required fields
+        $name = trim($data['name'] ?? '');
+        if ($name === '' || strlen($name) > 255) {
+            throw new InvalidArgumentException('Product name is required and must be 255 characters or less');
+        }
+
+        $sku = trim($data['sku'] ?? '');
+        if ($sku === '' || strlen($sku) > 100 || !preg_match('/^[A-Za-z0-9\-_]+$/', $sku)) {
+            throw new InvalidArgumentException('SKU is required and must be alphanumeric (max 100 chars)');
+        }
+
+        $stockQty = $data['stock_qty'] ?? 0;
+        if (!is_numeric($stockQty) || $stockQty < 0) {
+            throw new InvalidArgumentException('Stock quantity must be a non-negative number');
+        }
+
+        $reorderLevel = $data['reorder_level'] ?? 5;
+        if (!is_numeric($reorderLevel) || $reorderLevel < 0) {
+            throw new InvalidArgumentException('Reorder level must be a non-negative number');
+        }
+
+        $unitPrice = $data['unit_price'] ?? 0;
+        if (!is_numeric($unitPrice) || $unitPrice < 0) {
+            throw new InvalidArgumentException('Unit price must be a non-negative number');
+        }
+
         $stmt = $this->pdo->prepare(
             'INSERT INTO products (name, sku, stock_qty, reorder_level, unit_price)
              VALUES (:name, :sku, :stock_qty, :reorder_level, :unit_price)'
         );
         $stmt->execute([
-            ':name' => $data['name'],
-            ':sku' => $data['sku'],
-            ':stock_qty' => $data['stock_qty'] ?? 0,
-            ':reorder_level' => $data['reorder_level'] ?? 5,
-            ':unit_price' => $data['unit_price'] ?? 0,
+            ':name' => $name,
+            ':sku' => $sku,
+            ':stock_qty' => (int) $stockQty,
+            ':reorder_level' => (int) $reorderLevel,
+            ':unit_price' => (float) $unitPrice,
         ]);
         return (int) $this->pdo->lastInsertId();
     }
 
     public function updateProduct(int $id, array $data): bool
     {
+        // Validate required fields
+        $name = trim($data['name'] ?? '');
+        if ($name === '' || strlen($name) > 255) {
+            throw new InvalidArgumentException('Product name is required and must be 255 characters or less');
+        }
+
+        $sku = trim($data['sku'] ?? '');
+        if ($sku === '' || strlen($sku) > 100 || !preg_match('/^[A-Za-z0-9\-_]+$/', $sku)) {
+            throw new InvalidArgumentException('SKU is required and must be alphanumeric (max 100 chars)');
+        }
+
+        $stockQty = $data['stock_qty'] ?? 0;
+        if (!is_numeric($stockQty) || $stockQty < 0) {
+            throw new InvalidArgumentException('Stock quantity must be a non-negative number');
+        }
+
+        $reorderLevel = $data['reorder_level'] ?? 0;
+        if (!is_numeric($reorderLevel) || $reorderLevel < 0) {
+            throw new InvalidArgumentException('Reorder level must be a non-negative number');
+        }
+
+        $unitPrice = $data['unit_price'] ?? 0;
+        if (!is_numeric($unitPrice) || $unitPrice < 0) {
+            throw new InvalidArgumentException('Unit price must be a non-negative number');
+        }
+
         $stmt = $this->pdo->prepare(
             'UPDATE products SET name = :name, sku = :sku, stock_qty = :stock_qty,
              reorder_level = :reorder_level, unit_price = :unit_price WHERE id = :id'
         );
         return $stmt->execute([
             ':id' => $id,
-            ':name' => $data['name'],
-            ':sku' => $data['sku'],
-            ':stock_qty' => $data['stock_qty'],
-            ':reorder_level' => $data['reorder_level'],
-            ':unit_price' => $data['unit_price'],
+            ':name' => $name,
+            ':sku' => $sku,
+            ':stock_qty' => (int) $stockQty,
+            ':reorder_level' => (int) $reorderLevel,
+            ':unit_price' => (float) $unitPrice,
         ]);
     }
 
