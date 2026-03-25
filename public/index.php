@@ -31,6 +31,8 @@ require_once __DIR__ . '/../app/AppointmentsRepository.php';
 require_once __DIR__ . '/../app/LocationsRepository.php';
 require_once __DIR__ . '/../app/MessagesRepository.php';
 require_once __DIR__ . '/../app/XlsxHelper.php';
+require_once __DIR__ . '/../app/MobileMoneyGateway.php';
+require_once __DIR__ . '/../app/MobileMoneyRepository.php';
 
 $pageController = new PageController();
 $currentPage = $pageController->getCurrentPage();
@@ -102,8 +104,20 @@ $storeSettings = [
     'default_city' => 'Dar es Salaam',
     'starting_amount' => '50',
     'cash_denominations' => '50,100,200,500,1000,2000,5000,10000',
+    'mobile_money_mode' => 'mock',
+    'mobile_money_timeout' => '15',
+    'mobile_money_callback_secret' => '',
+    'mobile_money_mpesa_url' => '',
+    'mobile_money_mpesa_token' => '',
+    'mobile_money_mpesa_business_id' => '',
+    'mobile_money_mpesa_command' => 'customer_paybill',
+    'mobile_money_tigo_url' => '',
+    'mobile_money_tigo_token' => '',
+    'mobile_money_airtel_url' => '',
+    'mobile_money_airtel_token' => '',
 ];
 $configuredLocations = [];
+$mobileMoneyTransactions = [];
 
 try {
     $pdo = getDatabaseConnection();
@@ -122,6 +136,7 @@ try {
     $inventoryRepo = new InventoryRepository($pdo);
     $customerRepo = new CustomerRepository($pdo);
     $salesRepo = new SalesRepository($pdo);
+    $mobileMoneyRepo = new MobileMoneyRepository($pdo);
     $locationsRepo = new LocationsRepository($pdo);
 
     if (isStoreConfigSaveRequest()) {
@@ -154,6 +169,7 @@ try {
     $customers = $customerRepo->getCustomers(50);
     $allSales = $salesRepo->getSales(50);
     $configuredLocations = $locationsRepo->getLocations(200);
+    $mobileMoneyTransactions = $mobileMoneyRepo->getRecentTransactions(50);
     $storeSettings = getStoreSettings($pdo, $storeSettings);
 } catch (Throwable $exception) {
     $usingDemoData = true;
@@ -307,6 +323,17 @@ function handleStoreConfigSave(PDO $pdo): array
     $storeAddress = trim((string) ($_POST['store_address'] ?? 'Dar es Salaam'));
     $defaultCity = trim((string) ($_POST['default_city'] ?? 'Dar es Salaam'));
     $startingAmountRaw = trim((string) ($_POST['starting_amount'] ?? '50'));
+    $mobileMoneyModeRaw = strtolower(trim((string) ($_POST['mobile_money_mode'] ?? 'mock')));
+    $mobileMoneyTimeoutRaw = trim((string) ($_POST['mobile_money_timeout'] ?? '15'));
+    $mobileMoneyCallbackSecret = trim((string) ($_POST['mobile_money_callback_secret'] ?? ''));
+    $mobileMoneyMpesaUrl = trim((string) ($_POST['mobile_money_mpesa_url'] ?? ''));
+    $mobileMoneyMpesaToken = trim((string) ($_POST['mobile_money_mpesa_token'] ?? ''));
+    $mobileMoneyMpesaBusinessId = trim((string) ($_POST['mobile_money_mpesa_business_id'] ?? ''));
+    $mobileMoneyMpesaCommandRaw = strtolower(trim((string) ($_POST['mobile_money_mpesa_command'] ?? 'customer_paybill')));
+    $mobileMoneyTigoUrl = trim((string) ($_POST['mobile_money_tigo_url'] ?? ''));
+    $mobileMoneyTigoToken = trim((string) ($_POST['mobile_money_tigo_token'] ?? ''));
+    $mobileMoneyAirtelUrl = trim((string) ($_POST['mobile_money_airtel_url'] ?? ''));
+    $mobileMoneyAirtelToken = trim((string) ($_POST['mobile_money_airtel_token'] ?? ''));
 
     if ($storeName === '') {
         return ['type' => 'error', 'message' => 'Store name is required.'];
@@ -331,6 +358,38 @@ function handleStoreConfigSave(PDO $pdo): array
 
     if ($storeEmail !== '' && !filter_var($storeEmail, FILTER_VALIDATE_EMAIL)) {
         return ['type' => 'error', 'message' => 'Store email format is invalid.'];
+    }
+
+    $allowedModes = ['mock', 'live'];
+    $mobileMoneyMode = in_array($mobileMoneyModeRaw, $allowedModes, true) ? $mobileMoneyModeRaw : 'mock';
+
+    if (!is_numeric($mobileMoneyTimeoutRaw)) {
+        return ['type' => 'error', 'message' => 'Gateway timeout must be a valid number.'];
+    }
+
+    $mobileMoneyTimeout = (int) $mobileMoneyTimeoutRaw;
+    if ($mobileMoneyTimeout < 5 || $mobileMoneyTimeout > 60) {
+        return ['type' => 'error', 'message' => 'Gateway timeout must be between 5 and 60 seconds.'];
+    }
+
+    $allowedMpesaCommands = ['customer_paybill', 'customer_buygoods', 'disburse'];
+    $mobileMoneyMpesaCommand = in_array($mobileMoneyMpesaCommandRaw, $allowedMpesaCommands, true)
+        ? $mobileMoneyMpesaCommandRaw
+        : 'customer_paybill';
+
+    if ($mobileMoneyMode === 'live') {
+        if (strlen($mobileMoneyCallbackSecret) < 16) {
+            return ['type' => 'error', 'message' => 'Callback secret must be at least 16 characters in live mode.'];
+        }
+        if ($mobileMoneyMpesaUrl !== '' && !filter_var($mobileMoneyMpesaUrl, FILTER_VALIDATE_URL)) {
+            return ['type' => 'error', 'message' => 'M-Pesa URL is invalid.'];
+        }
+        if ($mobileMoneyTigoUrl !== '' && !filter_var($mobileMoneyTigoUrl, FILTER_VALIDATE_URL)) {
+            return ['type' => 'error', 'message' => 'Tigo Pesa URL is invalid.'];
+        }
+        if ($mobileMoneyAirtelUrl !== '' && !filter_var($mobileMoneyAirtelUrl, FILTER_VALIDATE_URL)) {
+            return ['type' => 'error', 'message' => 'Airtel Money URL is invalid.'];
+        }
     }
 
     $locationNames = $_POST['location_name'] ?? [];
@@ -381,6 +440,17 @@ function handleStoreConfigSave(PDO $pdo): array
         upsertStoreSetting($pdo, 'default_city', $defaultCity);
         upsertStoreSetting($pdo, 'starting_amount', (string) ((int) round($startingAmount)));
         upsertStoreSetting($pdo, 'cash_denominations', implode(',', array_map('strval', $selectedDenominations)));
+        upsertStoreSetting($pdo, 'mobile_money_mode', $mobileMoneyMode);
+        upsertStoreSetting($pdo, 'mobile_money_timeout', (string) $mobileMoneyTimeout);
+        upsertStoreSetting($pdo, 'mobile_money_callback_secret', $mobileMoneyCallbackSecret);
+        upsertStoreSetting($pdo, 'mobile_money_mpesa_url', $mobileMoneyMpesaUrl);
+        upsertStoreSetting($pdo, 'mobile_money_mpesa_token', $mobileMoneyMpesaToken);
+        upsertStoreSetting($pdo, 'mobile_money_mpesa_business_id', $mobileMoneyMpesaBusinessId);
+        upsertStoreSetting($pdo, 'mobile_money_mpesa_command', $mobileMoneyMpesaCommand);
+        upsertStoreSetting($pdo, 'mobile_money_tigo_url', $mobileMoneyTigoUrl);
+        upsertStoreSetting($pdo, 'mobile_money_tigo_token', $mobileMoneyTigoToken);
+        upsertStoreSetting($pdo, 'mobile_money_airtel_url', $mobileMoneyAirtelUrl);
+        upsertStoreSetting($pdo, 'mobile_money_airtel_token', $mobileMoneyAirtelToken);
 
         $locationsRepo = new LocationsRepository($pdo);
         $addedLocations = 0;
@@ -484,12 +554,60 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): ar
     try {
         switch ($entity) {
             case 'sale':
-                (new SalesRepository($pdo))->createSale([
-                    'customer_id' => (int) ($_POST['customer_id'] ?? 0),
-                    'amount' => (float) ($_POST['amount'] ?? 0),
-                    'payment_method' => (string) ($_POST['payment_method'] ?? 'Cash'),
-                ]);
-                return ['type' => 'success', 'message' => 'Sale created successfully.'];
+                $paymentMethod = (string) ($_POST['payment_method'] ?? 'Cash');
+                $customerId = (int) ($_POST['customer_id'] ?? 0);
+                $amount = (float) ($_POST['amount'] ?? 0);
+
+                $mobileResult = null;
+
+                $pdo->beginTransaction();
+                try {
+                    if ($paymentMethod === 'Mobile Money') {
+                        $gateway = new MobileMoneyGateway($pdo);
+                        $mobileResult = $gateway->initiate([
+                            'provider' => (string) ($_POST['mobile_money_provider'] ?? ''),
+                            'phone' => (string) ($_POST['mobile_money_phone'] ?? ''),
+                            'amount' => $amount,
+                            'currency' => 'TZS',
+                            'reference' => (string) ($_POST['mobile_money_reference'] ?? ''),
+                        ]);
+
+                        if (!($mobileResult['success'] ?? false)) {
+                            throw new RuntimeException((string) ($mobileResult['message'] ?? 'Mobile money payment failed.'));
+                        }
+                    }
+
+                    $saleId = (new SalesRepository($pdo))->createSale([
+                        'customer_id' => $customerId,
+                        'amount' => $amount,
+                        'payment_method' => $paymentMethod,
+                    ]);
+
+                    if (
+                        is_array($mobileResult)
+                        && isset($mobileResult['transaction_id'])
+                        && isset($gateway)
+                    ) {
+                        $gateway->attachSaleId((int) $mobileResult['transaction_id'], $saleId);
+                    }
+
+                    $pdo->commit();
+                } catch (Throwable $exception) {
+                    if ($pdo->inTransaction()) {
+                        $pdo->rollBack();
+                    }
+                    throw $exception;
+                }
+
+                $message = 'Sale created successfully.';
+                if (is_array($mobileResult)) {
+                    $message .= ' ' . (string) ($mobileResult['message'] ?? '');
+                    if (!empty($mobileResult['external_reference'])) {
+                        $message .= ' Ref: ' . (string) $mobileResult['external_reference'] . '.';
+                    }
+                }
+
+                return ['type' => 'success', 'message' => trim($message)];
 
             case 'product':
                 (new InventoryRepository($pdo))->createProduct([
@@ -1441,6 +1559,55 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                         </tbody>
                     </table>
                 </div>
+
+                <div class="data-table-container" style="margin-top: 18px;">
+                    <div class="table-header">
+                        <h3 style="margin:0; font-size:16px;">Mobile Money Payment Status</h3>
+                    </div>
+                    <table class="data-table" id="mobileMoneyTable">
+                        <thead>
+                            <tr>
+                                <th>Provider</th>
+                                <th>Phone</th>
+                                <th>Amount</th>
+                                <th>Reference</th>
+                                <th>Sale</th>
+                                <th>Status</th>
+                                <th>Date & Time</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (count($mobileMoneyTransactions) === 0): ?>
+                                <tr>
+                                    <td colspan="7" style="text-align:center; padding: 20px;">
+                                        <i class="fa-solid fa-mobile-screen-button"></i> No mobile money payments yet
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($mobileMoneyTransactions as $payment): ?>
+                                    <?php
+                                        $status = strtolower((string) ($payment['status'] ?? 'pending'));
+                                        $statusClass = 'warning';
+                                        if ($status === 'success' || $status === 'completed' || $status === 'mock_approved') {
+                                            $statusClass = 'success';
+                                        } elseif ($status === 'failed' || $status === 'cancelled') {
+                                            $statusClass = 'danger';
+                                        }
+                                    ?>
+                                    <tr>
+                                        <td><?= e((string) ($payment['provider'] ?? '')) ?></td>
+                                        <td><?= e((string) ($payment['msisdn'] ?? '')) ?></td>
+                                        <td><strong><?= e((string) ($payment['currency'] ?? 'TZS')) ?> <?= moneyFormat((float) ($payment['amount'] ?? 0)) ?></strong></td>
+                                        <td><code><?= e((string) ($payment['external_reference'] ?? '')) ?></code></td>
+                                        <td><?= e((string) ($payment['transaction_no'] ?? '-')) ?></td>
+                                        <td><span class="status-badge <?= e($statusClass) ?>"><?= e(ucfirst($status)) ?></span></td>
+                                        <td><?= date('M d, Y H:i', strtotime((string) ($payment['created_at'] ?? 'now'))) ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
             </section>
 
         <?php elseif ($currentPage === 'reports'): ?>
@@ -1946,6 +2113,80 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                             <span>Tsh <?= number_format($denomination, 0, '.', ',') ?></span>
                                         </label>
                                     <?php endforeach; ?>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="settings-card settings-card-full">
+                            <h4><i class="fa-solid fa-mobile-screen-button"></i> Mobile Money Gateway</h4>
+                            <div class="settings-two-col">
+                                <div class="form-group">
+                                    <label>Gateway Mode</label>
+                                    <select name="mobile_money_mode" class="form-control">
+                                        <option value="mock" <?= (($storeSettings['mobile_money_mode'] ?? 'mock') === 'mock') ? 'selected' : '' ?>>Mock (Testing)</option>
+                                        <option value="live" <?= (($storeSettings['mobile_money_mode'] ?? 'mock') === 'live') ? 'selected' : '' ?>>Live</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Gateway Timeout (seconds)</label>
+                                    <input type="number" name="mobile_money_timeout" value="<?= e((string) ($storeSettings['mobile_money_timeout'] ?? '15')) ?>" min="5" max="60" class="form-control">
+                                </div>
+                                <div class="form-group">
+                                    <label>Callback Secret</label>
+                                    <input type="password" name="mobile_money_callback_secret" value="<?= e((string) ($storeSettings['mobile_money_callback_secret'] ?? '')) ?>" placeholder="Set long secret token" autocomplete="new-password" class="form-control">
+                                </div>
+                                <div class="form-group">
+                                    <label>Callback URL</label>
+                                    <input type="text" value="<?= e((isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . dirname($_SERVER['SCRIPT_NAME'] ?? '/public/index.php') . '/mobile_money_callback.php') ?>" readonly class="form-control">
+                                </div>
+                            </div>
+
+                            <h5 style="margin-top:12px;">M-Pesa (Vodacom)</h5>
+                            <div class="settings-two-col">
+                                <div class="form-group">
+                                    <label>M-Pesa API URL</label>
+                                    <input type="url" name="mobile_money_mpesa_url" value="<?= e((string) ($storeSettings['mobile_money_mpesa_url'] ?? '')) ?>" placeholder="https://..." class="form-control">
+                                </div>
+                                <div class="form-group">
+                                    <label>M-Pesa API Token</label>
+                                    <input type="password" name="mobile_money_mpesa_token" value="<?= e((string) ($storeSettings['mobile_money_mpesa_token'] ?? '')) ?>" placeholder="Enter token" autocomplete="new-password" class="form-control">
+                                </div>
+                                <div class="form-group">
+                                    <label>M-Pesa Business ID</label>
+                                    <input type="text" name="mobile_money_mpesa_business_id" value="<?= e((string) ($storeSettings['mobile_money_mpesa_business_id'] ?? '')) ?>" placeholder="Paybill/Till number" class="form-control">
+                                </div>
+                                <div class="form-group">
+                                    <label>M-Pesa Command</label>
+                                    <?php $mpesaCommand = (string) ($storeSettings['mobile_money_mpesa_command'] ?? 'customer_paybill'); ?>
+                                    <select name="mobile_money_mpesa_command" class="form-control">
+                                        <option value="customer_paybill" <?= $mpesaCommand === 'customer_paybill' ? 'selected' : '' ?>>customer_paybill</option>
+                                        <option value="customer_buygoods" <?= $mpesaCommand === 'customer_buygoods' ? 'selected' : '' ?>>customer_buygoods</option>
+                                        <option value="disburse" <?= $mpesaCommand === 'disburse' ? 'selected' : '' ?>>disburse</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <h5 style="margin-top:12px;">Tigo Pesa</h5>
+                            <div class="settings-two-col">
+                                <div class="form-group">
+                                    <label>Tigo Pesa API URL</label>
+                                    <input type="url" name="mobile_money_tigo_url" value="<?= e((string) ($storeSettings['mobile_money_tigo_url'] ?? '')) ?>" placeholder="https://..." class="form-control">
+                                </div>
+                                <div class="form-group">
+                                    <label>Tigo Pesa API Token</label>
+                                    <input type="password" name="mobile_money_tigo_token" value="<?= e((string) ($storeSettings['mobile_money_tigo_token'] ?? '')) ?>" placeholder="Enter token" autocomplete="new-password" class="form-control">
+                                </div>
+                            </div>
+
+                            <h5 style="margin-top:12px;">Airtel Money</h5>
+                            <div class="settings-two-col">
+                                <div class="form-group">
+                                    <label>Airtel Money API URL</label>
+                                    <input type="url" name="mobile_money_airtel_url" value="<?= e((string) ($storeSettings['mobile_money_airtel_url'] ?? '')) ?>" placeholder="https://..." class="form-control">
+                                </div>
+                                <div class="form-group">
+                                    <label>Airtel Money API Token</label>
+                                    <input type="password" name="mobile_money_airtel_token" value="<?= e((string) ($storeSettings['mobile_money_airtel_token'] ?? '')) ?>" placeholder="Enter token" autocomplete="new-password" class="form-control">
                                 </div>
                             </div>
                         </section>

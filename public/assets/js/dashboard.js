@@ -340,7 +340,36 @@ const I18N_TEXT = {
     'View functionality requires API integration': 'Kazi ya kutazama inahitaji kuunganishwa na API',
     'Product deleted successfully!': 'Bidhaa imefutwa vizuri!',
     'Exporting ': 'Inahamisha ',
-    ' Report PDF...': ' Ripoti PDF...'
+    ' Report PDF...': ' Ripoti PDF...',
+    'Mobile Money Provider': 'Mtoa Huduma ya Pesa Mtandao',
+    'Mobile Number': 'Namba ya Simu ya Malipo',
+    'Payment Reference (Optional)': 'Kumbukumbu ya Malipo (si lazima)',
+    '07XXXXXXXX or 2557XXXXXXXX': '07XXXXXXXX au 2557XXXXXXXX',
+    'Invoice number or note': 'Namba ya ankara au maelezo',
+    'Mobile Money Gateway': 'Lango la Pesa Mtandao',
+    'Gateway Mode': 'Hali ya Lango',
+    'Mock (Testing)': 'Mock (Majaribio)',
+    'Live': 'Halisi',
+    'Gateway Timeout (seconds)': 'Muda wa Kusubiri Lango (sekunde)',
+    'M-Pesa (Vodacom)': 'M-Pesa (Vodacom)',
+    'M-Pesa API URL': 'URL ya API ya M-Pesa',
+    'M-Pesa API Token': 'Token ya API ya M-Pesa',
+    'Enter token': 'Weka token',
+    'M-Pesa Business ID': 'Kitambulisho cha Biashara cha M-Pesa',
+    'Paybill/Till number': 'Namba ya Paybill/Till',
+    'M-Pesa Command': 'Amri ya M-Pesa',
+    'Tigo Pesa API URL': 'URL ya API ya Tigo Pesa',
+    'Tigo Pesa API Token': 'Token ya API ya Tigo Pesa',
+    'Airtel Money API URL': 'URL ya API ya Airtel Money',
+    'Airtel Money API Token': 'Token ya API ya Airtel Money',
+    'Callback Secret': 'Siri ya Callback',
+    'Set long secret token': 'Weka token ndefu ya siri',
+    'Callback URL': 'URL ya Callback',
+    'Mobile Money Payment Status': 'Hali ya Malipo ya Pesa Mtandao',
+    'Provider': 'Mtoa Huduma',
+    'Reference': 'Kumbukumbu',
+    'Sale': 'Uuzaji',
+    'No mobile money payments yet': 'Bado hakuna malipo ya pesa mtandao'
 };
 
 const I18N_KEYS_SORTED = Object.keys(I18N_TEXT).sort((a, b) => b.length - a.length);
@@ -895,11 +924,30 @@ function showNewSaleModal() {
             </div>
             <div class="form-group">
                 <label>Payment Method</label>
-                <select name="payment_method">
+                <select id="salePaymentMethod" name="payment_method">
                     <option value="Cash">Cash</option>
                     <option value="Mobile Money">Mobile Money</option>
                     <option value="Card">Card</option>
+                    <option value="Bank Transfer">Bank Transfer</option>
                 </select>
+            </div>
+            <div id="mobileMoneyFields" style="display:none; border:1px solid #E5E7EB; border-radius:10px; padding:12px; background:#F9FAFB;">
+                <div class="form-group">
+                    <label>Mobile Money Provider</label>
+                    <select id="mobileMoneyProvider" name="mobile_money_provider">
+                        <option value="mpesa">M-Pesa</option>
+                        <option value="tigo_pesa">Tigo Pesa</option>
+                        <option value="airtel_money">Airtel Money</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Mobile Number</label>
+                    <input id="mobileMoneyPhone" type="tel" name="mobile_money_phone" placeholder="07XXXXXXXX or 2557XXXXXXXX">
+                </div>
+                <div class="form-group">
+                    <label>Payment Reference (Optional)</label>
+                    <input type="text" name="mobile_money_reference" placeholder="Invoice number or note">
+                </div>
             </div>
         </form>
     `;
@@ -907,6 +955,27 @@ function showNewSaleModal() {
         { text: 'Cancel', class: 'btn-secondary', onclick: 'closeModal()' },
         { text: 'Create Sale', class: 'btn-primary', onclick: 'document.getElementById("newSaleForm").requestSubmit()' }
     ]);
+
+    const paymentMethodEl = document.getElementById('salePaymentMethod');
+    const mobileMoneyFields = document.getElementById('mobileMoneyFields');
+    const mobileMoneyProvider = document.getElementById('mobileMoneyProvider');
+    const mobileMoneyPhone = document.getElementById('mobileMoneyPhone');
+
+    const toggleMobileMoneyFields = () => {
+        const isMobileMoney = paymentMethodEl?.value === 'Mobile Money';
+        if (mobileMoneyFields) {
+            mobileMoneyFields.style.display = isMobileMoney ? 'block' : 'none';
+        }
+        if (mobileMoneyProvider) {
+            mobileMoneyProvider.required = !!isMobileMoney;
+        }
+        if (mobileMoneyPhone) {
+            mobileMoneyPhone.required = !!isMobileMoney;
+        }
+    };
+
+    paymentMethodEl?.addEventListener('change', toggleMobileMoneyFields);
+    toggleMobileMoneyFields();
 }
 
 function showAddProductModal() {
