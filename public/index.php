@@ -94,6 +94,16 @@ $customers = [
     ['id' => 2, 'name' => 'Mchina', 'phone' => '255700000111', 'total_orders' => 2, 'total_spent' => 56500, 'created_at' => '2026-03-18'],
 ];
 $allSales = $recentSales;
+$storeSettings = [
+    'store_name' => 'Mchongoma Limited',
+    'store_email' => 'info@mchongoma.com',
+    'store_phone' => '',
+    'store_address' => 'Dar es Salaam',
+    'default_city' => 'Dar es Salaam',
+    'starting_amount' => '50',
+    'cash_denominations' => '50,100,200,500,1000,2000,5000,10000',
+];
+$configuredLocations = [];
 
 try {
     $pdo = getDatabaseConnection();
@@ -112,6 +122,13 @@ try {
     $inventoryRepo = new InventoryRepository($pdo);
     $customerRepo = new CustomerRepository($pdo);
     $salesRepo = new SalesRepository($pdo);
+    $locationsRepo = new LocationsRepository($pdo);
+
+    if (isStoreConfigSaveRequest()) {
+        $_SESSION['flash_feedback'] = handleStoreConfigSave($pdo);
+        header('Location: ?page=settings');
+        exit;
+    }
 
     if (isEntityCreateRequest()) {
         $_SESSION['flash_feedback'] = handleEntityCreate($pdo, $currentPage, $userName);
@@ -136,6 +153,8 @@ try {
     $products = $inventoryRepo->getProducts(50);
     $customers = $customerRepo->getCustomers(50);
     $allSales = $salesRepo->getSales(50);
+    $configuredLocations = $locationsRepo->getLocations(200);
+    $storeSettings = getStoreSettings($pdo, $storeSettings);
 } catch (Throwable $exception) {
     $usingDemoData = true;
     error_log('[POS Dashboard] ' . $exception->getMessage());
@@ -205,6 +224,250 @@ function isEntityCreateRequest(): bool
 {
     return ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST'
         && ($_POST['action'] ?? '') === 'create_entity';
+}
+
+function isStoreConfigSaveRequest(): bool
+{
+    return ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST'
+        && ($_GET['page'] ?? 'dashboard') === 'settings'
+        && ($_POST['action'] ?? '') === 'save_store_config';
+}
+
+function ensureStoreSettingsTable(PDO $pdo): void
+{
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS store_settings (
+            setting_key VARCHAR(100) PRIMARY KEY,
+            setting_value TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
+}
+
+function getStoreSettings(PDO $pdo, array $defaults): array
+{
+    ensureStoreSettingsTable($pdo);
+    $stmt = $pdo->query('SELECT setting_key, setting_value FROM store_settings');
+    $rows = $stmt ? $stmt->fetchAll() : [];
+
+    foreach ($rows as $row) {
+        $key = (string) ($row['setting_key'] ?? '');
+        if ($key === '' || !array_key_exists($key, $defaults)) {
+            continue;
+        }
+        $defaults[$key] = (string) ($row['setting_value'] ?? '');
+    }
+
+    return $defaults;
+}
+
+function upsertStoreSetting(PDO $pdo, string $key, string $value): void
+{
+    $stmt = $pdo->prepare(
+        'INSERT INTO store_settings (setting_key, setting_value)
+         VALUES (:setting_key, :setting_value)
+         ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)'
+    );
+    $stmt->execute([
+        ':setting_key' => $key,
+        ':setting_value' => $value,
+    ]);
+}
+
+function locationAlreadyExists(PDO $pdo, string $name, string $address, string $city): bool
+{
+    $stmt = $pdo->prepare(
+        'SELECT COUNT(*) AS total
+         FROM locations
+         WHERE LOWER(TRIM(name)) = LOWER(TRIM(:name))
+           AND LOWER(TRIM(address)) = LOWER(TRIM(:address))
+           AND LOWER(TRIM(city)) = LOWER(TRIM(:city))'
+    );
+    $stmt->execute([
+        ':name' => $name,
+        ':address' => $address,
+        ':city' => $city,
+    ]);
+
+    return ((int) ($stmt->fetch()['total'] ?? 0)) > 0;
+}
+
+function handleStoreConfigSave(PDO $pdo): array
+{
+    if (!hasValidCsrfToken()) {
+        return [
+            'type' => 'error',
+            'message' => 'Request validation failed. Refresh the page and try again.',
+        ];
+    }
+
+    $storeName = trim((string) ($_POST['store_name'] ?? 'Mchongoma Limited'));
+    $storeEmail = trim((string) ($_POST['store_email'] ?? ''));
+    $storePhone = trim((string) ($_POST['store_phone'] ?? ''));
+    $storeAddress = trim((string) ($_POST['store_address'] ?? 'Dar es Salaam'));
+    $defaultCity = trim((string) ($_POST['default_city'] ?? 'Dar es Salaam'));
+    $startingAmountRaw = trim((string) ($_POST['starting_amount'] ?? '50'));
+
+    if ($storeName === '') {
+        return ['type' => 'error', 'message' => 'Store name is required.'];
+    }
+
+    if ($storeAddress === '') {
+        return ['type' => 'error', 'message' => 'Store address is required.'];
+    }
+
+    if ($defaultCity === '') {
+        $defaultCity = 'Dar es Salaam';
+    }
+
+    if (!is_numeric($startingAmountRaw)) {
+        return ['type' => 'error', 'message' => 'Starting amount must be a valid number.'];
+    }
+
+    $startingAmount = (float) $startingAmountRaw;
+    if ($startingAmount < 50) {
+        return ['type' => 'error', 'message' => 'Starting amount must be at least 50 Tsh.'];
+    }
+
+    if ($storeEmail !== '' && !filter_var($storeEmail, FILTER_VALIDATE_EMAIL)) {
+        return ['type' => 'error', 'message' => 'Store email format is invalid.'];
+    }
+
+    $locationNames = $_POST['location_name'] ?? [];
+    $locationAddresses = $_POST['location_address'] ?? [];
+    $locationCities = $_POST['location_city'] ?? [];
+    $locationPhones = $_POST['location_phone'] ?? [];
+    $denominationsInput = $_POST['cash_denominations'] ?? [];
+
+    if (!is_array($locationNames)) {
+        $locationNames = [];
+    }
+    if (!is_array($locationAddresses)) {
+        $locationAddresses = [];
+    }
+    if (!is_array($locationCities)) {
+        $locationCities = [];
+    }
+    if (!is_array($locationPhones)) {
+        $locationPhones = [];
+    }
+    if (!is_array($denominationsInput)) {
+        $denominationsInput = [];
+    }
+
+    $validDenominations = [50, 100, 200, 500, 1000, 2000, 5000, 10000];
+    $selectedDenominations = [];
+    foreach ($denominationsInput as $item) {
+        $value = (int) $item;
+        if (in_array($value, $validDenominations, true)) {
+            $selectedDenominations[$value] = true;
+        }
+    }
+    $selectedDenominations = array_keys($selectedDenominations);
+    sort($selectedDenominations);
+
+    if (count($selectedDenominations) === 0) {
+        $selectedDenominations = $validDenominations;
+    }
+
+    try {
+        $pdo->beginTransaction();
+
+        ensureStoreSettingsTable($pdo);
+        upsertStoreSetting($pdo, 'store_name', $storeName);
+        upsertStoreSetting($pdo, 'store_email', $storeEmail);
+        upsertStoreSetting($pdo, 'store_phone', $storePhone);
+        upsertStoreSetting($pdo, 'store_address', $storeAddress);
+        upsertStoreSetting($pdo, 'default_city', $defaultCity);
+        upsertStoreSetting($pdo, 'starting_amount', (string) ((int) round($startingAmount)));
+        upsertStoreSetting($pdo, 'cash_denominations', implode(',', array_map('strval', $selectedDenominations)));
+
+        $locationsRepo = new LocationsRepository($pdo);
+        $addedLocations = 0;
+        $skippedLocations = 0;
+        $max = max(count($locationNames), count($locationAddresses), count($locationCities), count($locationPhones));
+
+        for ($i = 0; $i < $max; $i++) {
+            $name = trim((string) ($locationNames[$i] ?? ''));
+            $address = trim((string) ($locationAddresses[$i] ?? ''));
+            $city = trim((string) ($locationCities[$i] ?? $defaultCity));
+            $phone = trim((string) ($locationPhones[$i] ?? ''));
+
+            if ($name === '' && $address === '' && $city === '' && $phone === '') {
+                continue;
+            }
+
+            if ($name === '' || $address === '') {
+                $skippedLocations++;
+                continue;
+            }
+
+            if ($city === '') {
+                $city = $defaultCity;
+            }
+
+            if (locationAlreadyExists($pdo, $name, $address, $city)) {
+                $skippedLocations++;
+                continue;
+            }
+
+            $locationsRepo->createLocation([
+                'name' => $name,
+                'address' => $address,
+                'city' => $city,
+                'phone' => $phone,
+                'status' => 'Active',
+            ]);
+            $addedLocations++;
+        }
+
+        $pdo->commit();
+
+        $message = 'Store configuration saved. Starting amount set to Tsh ' . number_format($startingAmount, 0, '.', ',') . '.';
+        if ($addedLocations > 0 || $skippedLocations > 0) {
+            $message .= ' Locations: ' . $addedLocations . ' added';
+            if ($skippedLocations > 0) {
+                $message .= ', ' . $skippedLocations . ' skipped';
+            }
+            $message .= '.';
+        }
+
+        return ['type' => 'success', 'message' => $message];
+    } catch (Throwable $exception) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+
+        error_log('[POS Settings] ' . $exception->getMessage());
+        return [
+            'type' => 'error',
+            'message' => isDebugMode()
+                ? 'Could not save settings: ' . $exception->getMessage()
+                : 'Could not save store configuration. Please try again.',
+        ];
+    }
+}
+
+function getConfiguredDenominations(array $storeSettings): array
+{
+    $default = [50, 100, 200, 500, 1000, 2000, 5000, 10000];
+    $raw = (string) ($storeSettings['cash_denominations'] ?? '');
+    if ($raw === '') {
+        return $default;
+    }
+
+    $values = [];
+    foreach (explode(',', $raw) as $part) {
+        $num = (int) trim($part);
+        if ($num > 0) {
+            $values[$num] = true;
+        }
+    }
+
+    $list = array_keys($values);
+    sort($list);
+
+    return count($list) > 0 ? $list : $default;
 }
 
 function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): array
@@ -1563,11 +1826,27 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                             </tr>
                         </thead>
                         <tbody>
-                            <tr>
-                                <td colspan="7" style="text-align:center; padding: 20px;">
-                                    <i class="fa-solid fa-map"></i> No locations added yet
-                                </td>
-                            </tr>
+                            <?php if (count($configuredLocations) === 0): ?>
+                                <tr>
+                                    <td colspan="7" style="text-align:center; padding: 20px;">
+                                        <i class="fa-solid fa-map"></i> No locations added yet
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($configuredLocations as $location): ?>
+                                    <tr>
+                                        <td><?= (int) ($location['id'] ?? 0) ?></td>
+                                        <td><?= e((string) ($location['name'] ?? '')) ?></td>
+                                        <td><?= e((string) ($location['address'] ?? '')) ?></td>
+                                        <td><?= e((string) ($location['city'] ?? '')) ?></td>
+                                        <td><?= e((string) ($location['phone'] ?? '')) ?></td>
+                                        <td><span class="status-badge success"><?= e((string) ($location['status'] ?? 'Active')) ?></span></td>
+                                        <td>
+                                            <button class="btn-icon" title="Saved"><i class="fa-solid fa-check"></i></button>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
@@ -1605,33 +1884,103 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
             </section>
 
         <?php elseif ($currentPage === 'settings'): ?>
+            <?php $selectedDenominations = getConfiguredDenominations($storeSettings); ?>
             <section class="page-content">
                 <div class="content-header">
-                    <h2><i class="fa-solid fa-gear"></i> Store Configuration</h2>
+                    <h2><i class="fa-solid fa-gear"></i> Store Config</h2>
                 </div>
-                <div class="settings-container">
-                    <div class="settings-panel">
-                        <h3>Basic Settings</h3>
-                        <form>
-                            <div class="form-group">
-                                <label>Store Name</label>
-                                <input type="text" placeholder="Enter store name" class="form-control">
-                            </div>
-                            <div class="form-group">
-                                <label>Store Email</label>
-                                <input type="email" placeholder="Enter store email" class="form-control">
-                            </div>
-                            <div class="form-group">
-                                <label>Store Phone</label>
-                                <input type="tel" placeholder="Enter store phone" class="form-control">
+                <div class="settings-redesign">
+                    <section class="settings-hero">
+                        <div>
+                            <h3>Setup</h3>
+                            <p>Cash, city, branches.</p>
+                        </div>
+                        <div class="hero-badge"><i class="fa-solid fa-location-dot"></i> Dar es Salaam</div>
+                    </section>
+
+                    <form method="post" action="?page=settings" id="storeConfigForm" class="settings-grid-form">
+                        <input type="hidden" name="action" value="save_store_config">
+                        <input type="hidden" name="csrf_token" value="<?= e(getCsrfToken()) ?>">
+
+                        <section class="settings-card">
+                            <h4><i class="fa-solid fa-shop"></i> Profile</h4>
+                            <div class="settings-two-col">
+                                <div class="form-group">
+                                    <label>Store Name</label>
+                                    <input type="text" name="store_name" value="<?= e((string) ($storeSettings['store_name'] ?? 'Mchongoma Limited')) ?>" placeholder="Enter store name" class="form-control" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Store Email</label>
+                                    <input type="email" name="store_email" value="<?= e((string) ($storeSettings['store_email'] ?? '')) ?>" placeholder="Enter store email" class="form-control">
+                                </div>
+                                <div class="form-group">
+                                    <label>Store Phone</label>
+                                    <input type="tel" name="store_phone" value="<?= e((string) ($storeSettings['store_phone'] ?? '')) ?>" placeholder="Enter store phone" class="form-control">
+                                </div>
+                                <div class="form-group">
+                                    <label>Default City</label>
+                                    <input type="text" id="defaultCity" name="default_city" value="<?= e((string) ($storeSettings['default_city'] ?? 'Dar es Salaam')) ?>" placeholder="City" class="form-control" required>
+                                </div>
                             </div>
                             <div class="form-group">
                                 <label>Store Address</label>
-                                <textarea placeholder="Enter store address" class="form-control" rows="3"></textarea>
+                                <textarea name="store_address" placeholder="Enter store address" class="form-control" rows="3" required><?= e((string) ($storeSettings['store_address'] ?? 'Dar es Salaam')) ?></textarea>
                             </div>
-                            <button type="button" class="btn btn-primary" data-action="saveSettings">Save Settings</button>
-                        </form>
-                    </div>
+                        </section>
+
+                        <section class="settings-card">
+                            <h4><i class="fa-solid fa-coins"></i> Cash</h4>
+                            <div class="form-group">
+                                <label>Starting Amount (Tsh)</label>
+                                <input type="number" name="starting_amount" value="<?= e((string) ($storeSettings['starting_amount'] ?? '50')) ?>" min="50" step="1" class="form-control" required>
+                                <small style="color:#6B7280;">Starting amount begins from 50 Tsh.</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Tanzania Denominations</label>
+                                <div class="denomination-grid">
+                                    <?php foreach ([50, 100, 200, 500, 1000, 2000, 5000, 10000] as $denomination): ?>
+                                        <label class="denomination-chip">
+                                            <input type="checkbox" name="cash_denominations[]" value="<?= $denomination ?>" <?= in_array($denomination, $selectedDenominations, true) ? 'checked' : '' ?>>
+                                            <span>Tsh <?= number_format($denomination, 0, '.', ',') ?></span>
+                                        </label>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="settings-card settings-card-full">
+                            <h4><i class="fa-solid fa-map-location-dot"></i> Locations</h4>
+                            <div id="locationRows" class="location-rows">
+                                    <?php if (count($configuredLocations) > 0): ?>
+                                        <?php foreach ($configuredLocations as $location): ?>
+                                            <div data-location-row class="location-row">
+                                                <input type="text" name="location_name[]" value="<?= e((string) ($location['name'] ?? '')) ?>" placeholder="Location name" class="form-control">
+                                                <input type="text" name="location_address[]" value="<?= e((string) ($location['address'] ?? '')) ?>" placeholder="Address" class="form-control">
+                                                <input type="text" name="location_city[]" value="<?= e((string) ($location['city'] ?? 'Dar es Salaam')) ?>" placeholder="City" class="form-control">
+                                                <input type="text" name="location_phone[]" value="<?= e((string) ($location['phone'] ?? '')) ?>" placeholder="Phone" class="form-control">
+                                                <button type="button" class="btn btn-secondary" data-action="removeLocationRow"><i class="fa-solid fa-minus"></i></button>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    <?php else: ?>
+                                        <div data-location-row class="location-row">
+                                            <input type="text" name="location_name[]" value="Main Store" placeholder="Location name" class="form-control">
+                                            <input type="text" name="location_address[]" value="Dar es Salaam" placeholder="Address" class="form-control">
+                                            <input type="text" name="location_city[]" value="Dar es Salaam" placeholder="City" class="form-control">
+                                            <input type="text" name="location_phone[]" placeholder="Phone" class="form-control">
+                                            <button type="button" class="btn btn-secondary" data-action="removeLocationRow"><i class="fa-solid fa-minus"></i></button>
+                                        </div>
+                                    <?php endif; ?>
+                            </div>
+                            <button type="button" class="btn btn-secondary" data-action="addLocationRow" style="margin-top:10px;">
+                                <i class="fa-solid fa-plus"></i> Add Location
+                            </button>
+                        </section>
+
+                        <div class="settings-submit-row">
+                            <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+                        </div>
+                    </form>
                 </div>
             </section>
 
@@ -1699,11 +2048,11 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
 <div class="toast-container" id="toastContainer"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<script type="application/json" id="appConfig"><?= htmlspecialchars(json_encode([
+<script type="application/json" id="appConfig"><?= json_encode([
     'salesChartData' => ['week' => $weeklySales, 'month' => $monthlySales],
     'currentPage' => $currentPage,
     'csrfToken' => getCsrfToken(),
-], JSON_THROW_ON_ERROR), ENT_QUOTES, 'UTF-8') ?></script>
+], JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
 <script src="assets/js/dashboard.js"></script>
 </body>
 </html>

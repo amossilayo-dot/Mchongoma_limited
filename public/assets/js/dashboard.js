@@ -251,10 +251,16 @@ function initActionBindings() {
             openAddAppointmentModal,
             openAddLocationModal,
             openComposeMessageModal,
+            addLocationRow,
             saveSettings,
             closeModal,
             closeNotifications,
         };
+
+        if (action === 'removeLocationRow') {
+            removeLocationRow(target);
+            return;
+        }
 
         if (action === 'go') {
             if (/^\?page=[A-Za-z0-9\-]+$/.test(value)) {
@@ -830,6 +836,48 @@ function openComposeMessageModal() {
 
 function saveSettings() {
     showToast('success', 'Settings saved successfully!');
+}
+
+function addLocationRow() {
+    const rows = document.getElementById('locationRows');
+    if (!rows) {
+        return;
+    }
+
+    const defaultCityInput = document.getElementById('defaultCity');
+    const defaultCity = escapeHtml(defaultCityInput?.value || 'Dar es Salaam');
+
+    const row = document.createElement('div');
+    row.setAttribute('data-location-row', '');
+    row.className = 'location-row';
+
+    row.innerHTML = `
+        <input type="text" name="location_name[]" placeholder="Location name" class="form-control">
+        <input type="text" name="location_address[]" placeholder="Address" class="form-control">
+        <input type="text" name="location_city[]" value="${defaultCity}" placeholder="City" class="form-control">
+        <input type="text" name="location_phone[]" placeholder="Phone" class="form-control">
+        <button type="button" class="btn btn-secondary" data-action="removeLocationRow"><i class="fa-solid fa-minus"></i></button>
+    `;
+
+    rows.appendChild(row);
+}
+
+function removeLocationRow(trigger) {
+    const rows = document.getElementById('locationRows');
+    if (!rows) {
+        return;
+    }
+
+    const rowElements = rows.querySelectorAll('[data-location-row]');
+    if (rowElements.length <= 1) {
+        showToast('warning', 'At least one location row is required.');
+        return;
+    }
+
+    const row = trigger.closest('[data-location-row]');
+    if (row) {
+        row.remove();
+    }
 }
 
 function showEndOfDayReport() {
