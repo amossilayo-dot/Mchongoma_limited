@@ -328,6 +328,7 @@ body {
     position: sticky;
     top: 0;
     z-index: 50;
+    backdrop-filter: blur(8px);
 }
 
 .topbar-left {
@@ -642,6 +643,17 @@ body {
     cursor: pointer;
     transition: all var(--transition-base);
     box-shadow: var(--shadow-sm);
+    position: relative;
+    overflow: hidden;
+}
+
+.quick-actions button::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(120deg, transparent 35%, rgba(79, 70, 229, 0.08) 50%, transparent 65%);
+    transform: translateX(-100%);
+    transition: transform 500ms ease;
 }
 
 .quick-actions button:hover {
@@ -649,6 +661,10 @@ body {
     box-shadow: var(--shadow-lg);
     border-color: var(--primary);
     background: linear-gradient(135deg, white 0%, #F5F3FF 100%);
+}
+
+.quick-actions button:hover::after {
+    transform: translateX(100%);
 }
 
 .quick-actions button:active {
@@ -1095,8 +1111,208 @@ body {
     transition: all var(--transition-base);
 }
 
+.login-body {
+    min-height: 100vh;
+    margin: 0;
+    background:
+        radial-gradient(circle at 12% 20%, rgba(79, 70, 229, 0.24), transparent 35%),
+        radial-gradient(circle at 88% 76%, rgba(16, 185, 129, 0.24), transparent 38%),
+        linear-gradient(145deg, #0f172a 0%, #1e1b4b 45%, #111827 100%);
+    display: grid;
+    place-items: center;
+    color: #e5e7eb;
+}
+
+.login-shell {
+    width: min(980px, calc(100vw - 40px));
+    min-height: min(640px, calc(100vh - 40px));
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    border-radius: 24px;
+    overflow: hidden;
+    box-shadow: 0 28px 60px rgba(0, 0, 0, 0.45);
+    background: rgba(17, 24, 39, 0.45);
+    backdrop-filter: blur(6px);
+}
+
+.login-brand-panel {
+    padding: 52px;
+    background:
+        radial-gradient(circle at 28% 18%, rgba(129, 140, 248, 0.22), transparent 35%),
+        linear-gradient(155deg, #0f172a 0%, #1f2937 100%);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    justify-content: center;
+}
+
+.login-brand-mark {
+    width: 66px;
+    height: 66px;
+    border-radius: 18px;
+    background: linear-gradient(135deg, #8b5cf6, #4f46e5);
+    display: grid;
+    place-items: center;
+    font-size: 28px;
+    color: #fff;
+    box-shadow: 0 10px 24px rgba(79, 70, 229, 0.35);
+}
+
+.login-brand-panel h1 {
+    margin: 0;
+    font-size: 36px;
+    line-height: 1.1;
+    color: #fff;
+    letter-spacing: 0.2px;
+}
+
+.login-brand-panel p {
+    margin: 0;
+    max-width: 460px;
+    color: #cbd5e1;
+    font-size: 15px;
+}
+
+.login-brand-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.login-brand-pills span {
+    padding: 8px 12px;
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    border-radius: 999px;
+    color: #e2e8f0;
+    font-size: 12px;
+    font-weight: 600;
+    background: rgba(15, 23, 42, 0.45);
+}
+
+.login-card {
+    background: #ffffff;
+    color: #111827;
+    padding: 46px 38px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.login-card h2 {
+    margin: 0;
+    font-size: 32px;
+    line-height: 1.15;
+}
+
+.login-subtitle {
+    margin: 6px 0 26px;
+    color: #6b7280;
+    font-size: 14px;
+}
+
+.login-error {
+    margin-bottom: 16px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #b91c1c;
+    border-radius: 12px;
+    padding: 11px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.login-card label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: #6b7280;
+    letter-spacing: 0.04em;
+}
+
+.login-input-wrap {
+    position: relative;
+    margin-bottom: 16px;
+}
+
+.login-input-wrap i {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #9ca3af;
+}
+
+.login-input-wrap input {
+    width: 100%;
+    border-radius: 12px;
+    border: 1px solid #d1d5db;
+    background: #f9fafb;
+    padding: 12px 12px 12px 38px;
+    font-size: 14px;
+    transition: border-color var(--transition-base), box-shadow var(--transition-base), background var(--transition-base);
+}
+
+.login-input-wrap input:focus {
+    outline: none;
+    border-color: #4f46e5;
+    box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.16);
+    background: #ffffff;
+}
+
+.login-btn {
+    width: 100%;
+    margin-top: 6px;
+    border: none;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    color: #fff;
+    padding: 13px 14px;
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+    transition: transform var(--transition-base), box-shadow var(--transition-base), filter var(--transition-base);
+}
+
+.login-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 26px rgba(79, 70, 229, 0.35);
+    filter: brightness(1.03);
+}
+
+.login-hint {
+    margin-top: 16px;
+    font-size: 12px;
+    color: #6b7280;
+}
+
+@media (max-width: 900px) {
+    .login-shell {
+        grid-template-columns: 1fr;
+        min-height: 0;
+        width: min(560px, calc(100vw - 28px));
+    }
+
+    .login-brand-panel {
+        padding: 26px 24px 20px;
+    }
+
+    .login-brand-panel h1 {
+        font-size: 28px;
+    }
+
+    .login-card {
+        padding: 24px;
+    }
+}
+
 .btn-primary {
-    background: var(--primary);
+    background: linear-gradient(135deg, #4F46E5 0%, #6366F1 100%);
     color: white;
 }
 
@@ -1142,12 +1358,27 @@ body {
     cursor: pointer;
     transition: all var(--transition-base);
     box-shadow: var(--shadow-sm);
+    position: relative;
+    overflow: hidden;
+}
+
+.report-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(145deg, rgba(79, 70, 229, 0.06), transparent 45%);
+    opacity: 0;
+    transition: opacity var(--transition-base);
 }
 
 .report-card:hover {
     transform: translateY(-4px);
     box-shadow: var(--shadow-lg);
     border-color: var(--primary);
+}
+
+.report-card:hover::before {
+    opacity: 1;
 }
 
 .report-icon {

@@ -4,6 +4,16 @@ USE pos_mchongoma;
 DROP TABLE IF EXISTS sales;
 DROP TABLE IF EXISTS products;
 DROP TABLE IF EXISTS customers;
+DROP TABLE IF EXISTS users;
+
+CREATE TABLE users (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(120) NOT NULL,
+    email VARCHAR(190) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    role VARCHAR(30) NOT NULL DEFAULT 'Admin',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE TABLE customers (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -35,6 +45,10 @@ CREATE TABLE sales (
 INSERT INTO customers (name, phone) VALUES
 ('Walk-in Customer', NULL),
 ('Mchina', '255700000111');
+
+INSERT INTO users (name, email, password, role) VALUES
+('Admin User', 'admin@mchongoma.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Admin'),
+('Manager User', 'manager@mchongoma.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Manager');
 
 INSERT INTO products (name, sku, stock_qty, reorder_level, unit_price) VALUES
 ('Sugar 1kg', 'SKU-SUG-001', 120, 15, 3800.00),

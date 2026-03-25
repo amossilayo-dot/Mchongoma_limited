@@ -7,30 +7,11 @@ header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: SAMEORIGIN');
 header('X-XSS-Protection: 1; mode=block');
 header('Referrer-Policy: strict-origin-when-cross-origin');
-header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com; img-src 'self' data:; connect-src 'self'");
+header("Content-Security-Policy: default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'");
 
-// Secure session configuration
-if (session_status() === PHP_SESSION_NONE) {
-    $isSecure = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on';
-    session_set_cookie_params([
-        'lifetime' => 0,
-        'path' => '/',
-        'domain' => '',
-        'secure' => $isSecure,
-        'httponly' => true,
-        'samesite' => 'Strict',
-    ]);
-    session_start();
-
-    // Regenerate session ID periodically to prevent fixation
-    if (!isset($_SESSION['_created'])) {
-        $_SESSION['_created'] = time();
-    } elseif (time() - $_SESSION['_created'] > 1800) {
-        session_regenerate_id(true);
-        $_SESSION['_created'] = time();
-    }
-}
-
+require_once __DIR__ . '/../app/Auth.php';
+ensureSecureSessionStarted();
+requireAuthentication();
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../app/PageController.php';
 require_once __DIR__ . '/../app/DashboardRepository.php';
@@ -49,10 +30,26 @@ require_once __DIR__ . '/../app/ReturnsRepository.php';
 require_once __DIR__ . '/../app/AppointmentsRepository.php';
 require_once __DIR__ . '/../app/LocationsRepository.php';
 require_once __DIR__ . '/../app/MessagesRepository.php';
+require_once __DIR__ . '/../app/XlsxHelper.php';
 
 $pageController = new PageController();
 $currentPage = $pageController->getCurrentPage();
-$pageTitle = $pageController->getPageTitle();
+$authUser = currentUser();
+$userName = (string) ($authUser['name'] ?? 'User');
+$userRole = (string) ($authUser['role'] ?? 'Staff');
+$letters = preg_replace('/[^A-Za-z]/', '', $userName);
+$userInitials = strtoupper(substr($letters !== null && $letters !== '' ? $letters : 'US', 0, 2));
+$flashFeedback = $_SESSION['flash_feedback'] ?? null;
+unset($_SESSION['flash_feedback']);
+
+$accessDeniedMessage = null;
+if (!canAccessPage($currentPage, $userRole)) {
+    $accessDeniedMessage = 'You do not have permission to open that page.';
+    $currentPage = 'dashboard';
+}
+
+$pages = $pageController->getPages();
+$pageTitle = $pages[$currentPage]['title'] ?? 'Dashboard';
 
 $usingDemoData = false;
 $errorMessage = null;
@@ -116,6 +113,12 @@ try {
     $customerRepo = new CustomerRepository($pdo);
     $salesRepo = new SalesRepository($pdo);
 
+    if (isEntityCreateRequest()) {
+        $_SESSION['flash_feedback'] = handleEntityCreate($pdo, $currentPage, $userName);
+        header('Location: ?page=' . urlencode($currentPage));
+        exit;
+    }
+
     if (isInventoryImportRequest()) {
         $importFeedback = handleProductImport($inventoryRepo);
     }
@@ -150,8 +153,16 @@ try {
     }
 }
 
-function moneyFormat(float|int $amount): string
+function moneyFormat(int|float|string|null $amount): string
 {
+    if (is_string($amount)) {
+        $amount = trim(str_replace(',', '', $amount));
+    }
+
+    if (!is_numeric($amount)) {
+        $amount = 0;
+    }
+
     return number_format((float) $amount, 0, '.', ',');
 }
 
@@ -188,6 +199,163 @@ function isInventoryImportRequest(): bool
     return ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST'
         && ($_GET['page'] ?? 'dashboard') === 'inventory'
         && ($_POST['action'] ?? '') === 'import_products';
+}
+
+function isEntityCreateRequest(): bool
+{
+    return ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST'
+        && ($_POST['action'] ?? '') === 'create_entity';
+}
+
+function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): array
+{
+    if (!hasValidCsrfToken()) {
+        return [
+            'type' => 'error',
+            'message' => 'Request validation failed. Refresh the page and try again.',
+        ];
+    }
+
+    $entity = (string) ($_POST['entity'] ?? '');
+
+    try {
+        switch ($entity) {
+            case 'sale':
+                (new SalesRepository($pdo))->createSale([
+                    'customer_id' => (int) ($_POST['customer_id'] ?? 0),
+                    'amount' => (float) ($_POST['amount'] ?? 0),
+                    'payment_method' => (string) ($_POST['payment_method'] ?? 'Cash'),
+                ]);
+                return ['type' => 'success', 'message' => 'Sale created successfully.'];
+
+            case 'product':
+                (new InventoryRepository($pdo))->createProduct([
+                    'name' => (string) ($_POST['name'] ?? ''),
+                    'sku' => (string) ($_POST['sku'] ?? ''),
+                    'unit_price' => (float) ($_POST['unit_price'] ?? 0),
+                    'stock_qty' => (int) ($_POST['stock_qty'] ?? 0),
+                    'reorder_level' => (int) ($_POST['reorder_level'] ?? 5),
+                ]);
+                return ['type' => 'success', 'message' => 'Product created successfully.'];
+
+            case 'customer':
+                (new CustomerRepository($pdo))->createCustomer([
+                    'name' => (string) ($_POST['name'] ?? ''),
+                    'phone' => (string) ($_POST['phone'] ?? ''),
+                ]);
+                return ['type' => 'success', 'message' => 'Customer created successfully.'];
+
+            case 'supplier':
+                (new SuppliersRepository($pdo))->createSupplier([
+                    'name' => (string) ($_POST['name'] ?? ''),
+                    'contact_person' => (string) ($_POST['contact_person'] ?? ''),
+                    'phone' => (string) ($_POST['phone'] ?? ''),
+                    'email' => (string) ($_POST['email'] ?? ''),
+                    'address' => (string) ($_POST['address'] ?? ''),
+                ]);
+                return ['type' => 'success', 'message' => 'Supplier created successfully.'];
+
+            case 'employee':
+                (new EmployeesRepository($pdo))->createEmployee([
+                    'name' => (string) ($_POST['name'] ?? ''),
+                    'position' => (string) ($_POST['position'] ?? ''),
+                    'phone' => (string) ($_POST['phone'] ?? ''),
+                    'email' => (string) ($_POST['email'] ?? ''),
+                    'salary' => (float) ($_POST['salary'] ?? 0),
+                ]);
+                return ['type' => 'success', 'message' => 'Employee created successfully.'];
+
+            case 'expense':
+                (new ExpensesRepository($pdo))->createExpense([
+                    'description' => (string) ($_POST['description'] ?? ''),
+                    'category' => (string) ($_POST['category'] ?? ''),
+                    'amount' => (float) ($_POST['amount'] ?? 0),
+                ]);
+                return ['type' => 'success', 'message' => 'Expense saved successfully.'];
+
+            case 'invoice':
+                (new InvoicesRepository($pdo))->createInvoice([
+                    'customer_id' => (int) ($_POST['customer_id'] ?? 0),
+                    'amount' => (float) ($_POST['amount'] ?? 0),
+                ]);
+                return ['type' => 'success', 'message' => 'Invoice created successfully.'];
+
+            case 'delivery':
+                (new DeliveriesRepository($pdo))->createDelivery([
+                    'customer_id' => (int) ($_POST['customer_id'] ?? 0),
+                    'amount' => (float) ($_POST['amount'] ?? 0),
+                ]);
+                return ['type' => 'success', 'message' => 'Delivery created successfully.'];
+
+            case 'receiving':
+                (new ReceivingRepository($pdo))->createReceiving([
+                    'supplier_id' => (int) ($_POST['supplier_id'] ?? 0),
+                    'amount' => (float) ($_POST['amount'] ?? 0),
+                ]);
+                return ['type' => 'success', 'message' => 'Receiving record created successfully.'];
+
+            case 'quotation':
+                (new QuotationsRepository($pdo))->createQuotation([
+                    'customer_id' => (int) ($_POST['customer_id'] ?? 0),
+                    'amount' => (float) ($_POST['amount'] ?? 0),
+                ]);
+                return ['type' => 'success', 'message' => 'Quotation created successfully.'];
+
+            case 'purchase_order':
+                (new PurchaseOrdersRepository($pdo))->createOrder([
+                    'supplier_id' => (int) ($_POST['supplier_id'] ?? 0),
+                    'amount' => (float) ($_POST['amount'] ?? 0),
+                ]);
+                return ['type' => 'success', 'message' => 'Purchase order created successfully.'];
+
+            case 'return':
+                (new ReturnsRepository($pdo))->createReturn([
+                    'product_id' => (int) ($_POST['product_id'] ?? 0),
+                    'quantity' => (int) ($_POST['quantity'] ?? 0),
+                    'reason' => (string) ($_POST['reason'] ?? ''),
+                ]);
+                return ['type' => 'success', 'message' => 'Return created successfully.'];
+
+            case 'appointment':
+                (new AppointmentsRepository($pdo))->createAppointment([
+                    'title' => (string) ($_POST['title'] ?? ''),
+                    'customer_id' => (int) ($_POST['customer_id'] ?? 0),
+                    'appointment_date' => (string) ($_POST['appointment_date'] ?? ''),
+                ]);
+                return ['type' => 'success', 'message' => 'Appointment created successfully.'];
+
+            case 'location':
+                (new LocationsRepository($pdo))->createLocation([
+                    'name' => (string) ($_POST['name'] ?? ''),
+                    'address' => (string) ($_POST['address'] ?? ''),
+                    'city' => (string) ($_POST['city'] ?? ''),
+                    'phone' => (string) ($_POST['phone'] ?? ''),
+                ]);
+                return ['type' => 'success', 'message' => 'Location created successfully.'];
+
+            case 'message':
+                (new MessagesRepository($pdo))->createMessage([
+                    'sender' => $userName,
+                    'recipient' => (string) ($_POST['recipient'] ?? ''),
+                    'subject' => (string) ($_POST['subject'] ?? ''),
+                    'message' => (string) ($_POST['message'] ?? ''),
+                ]);
+                return ['type' => 'success', 'message' => 'Message sent successfully.'];
+        }
+
+        return [
+            'type' => 'warning',
+            'message' => 'Unknown action requested. No changes were made.',
+        ];
+    } catch (Throwable $exception) {
+        error_log('[POS Create] ' . $exception->getMessage());
+        return [
+            'type' => 'error',
+            'message' => isDebugMode()
+                ? 'Save failed: ' . $exception->getMessage()
+                : 'Could not save the record. Please check your input and try again.',
+        ];
+    }
 }
 
 function normalizeImportHeader(string $header): string
@@ -388,7 +556,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
     if (!isset($_FILES['product_import_file'])) {
         return [
             'type' => 'error',
-            'message' => 'No file uploaded. Choose a CSV file exported from Excel.',
+            'message' => 'No file uploaded. Choose an Excel CSV or XLSX file.',
         ];
     }
 
@@ -396,7 +564,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
     if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
         return [
             'type' => 'error',
-            'message' => 'Upload failed. Please try again with a valid CSV file.',
+            'message' => 'Upload failed. Please try again with a valid CSV or XLSX file.',
         ];
     }
 
@@ -408,21 +576,21 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
         ];
     }
 
-    $maxFileSizeBytes = 2 * 1024 * 1024;
+    $maxFileSizeBytes = 5 * 1024 * 1024;
     $fileSize = (int) ($file['size'] ?? 0);
     if ($fileSize <= 0 || $fileSize > $maxFileSizeBytes) {
         return [
             'type' => 'error',
-            'message' => 'File size must be greater than 0 and not exceed 2MB.',
+            'message' => 'File size must be greater than 0 and not exceed 5MB.',
         ];
     }
 
     $originalName = (string) ($file['name'] ?? '');
     $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
-    if ($extension !== 'csv') {
+    if (!in_array($extension, ['csv', 'xlsx'], true)) {
         return [
             'type' => 'error',
-            'message' => 'Unsupported file type. Save your Excel file as CSV, then import it.',
+            'message' => 'Unsupported file type. Upload a CSV or XLSX file.',
         ];
     }
 
@@ -438,23 +606,27 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
         'text/plain',
         'application/csv',
         'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/zip',
         'application/octet-stream',
     ];
 
     if ($mimeType !== '' && !in_array($mimeType, $allowedMimeTypes, true)) {
         return [
             'type' => 'error',
-            'message' => 'Invalid file content type. Please upload a CSV exported from Excel.',
+            'message' => 'Invalid file content type. Please upload a CSV or XLSX exported from Excel.',
         ];
     }
 
     try {
-        $parsed = buildProductRowsFromCsv($tmpName);
+        $parsed = $extension === 'xlsx'
+            ? buildProductRowsFromXlsx($tmpName)
+            : buildProductRowsFromCsv($tmpName);
 
         if (count($parsed['rows']) === 0) {
             return [
                 'type' => 'warning',
-                'message' => 'No valid product rows found. Ensure CSV has columns: name, sku, unit_price, stock_qty, reorder_level.',
+                'message' => 'No valid product rows found. Ensure file has columns: name, sku, unit_price, stock_qty, reorder_level.',
             ];
         }
 
@@ -480,9 +652,100 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
             'type' => 'error',
             'message' => isDebugMode()
                 ? 'Import failed: ' . $exception->getMessage()
-                : 'Import failed while processing the file. Please review your CSV and try again.',
+                : 'Import failed while processing the file. Please review your CSV/XLSX and try again.',
         ];
     }
+}
+
+function buildProductRowsFromXlsx(string $xlsxFilePath): array
+{
+    $tableRows = readXlsxRows($xlsxFilePath, 5000);
+    if (!$tableRows || count($tableRows) < 1) {
+        throw new RuntimeException('XLSX is empty or missing required columns. Expected: name, sku, unit_price.');
+    }
+
+    $firstRow = array_map(static fn($v) => (string) $v, $tableRows[0]);
+    $normalizedHeaders = array_map(static fn($h) => normalizeImportHeader((string) $h), $firstRow);
+    $requiredHeaders = ['name', 'sku', 'unit_price'];
+
+    $hasHeaderRow = !array_diff($requiredHeaders, $normalizedHeaders);
+    $headerMap = [];
+    $rows = [];
+    $errors = [];
+    $skipped = 0;
+    $seenSkus = [];
+
+    if ($hasHeaderRow) {
+        foreach ($normalizedHeaders as $index => $header) {
+            $headerMap[$header] = $index;
+        }
+    } else {
+        $headerMap = [
+            'name' => 0,
+            'sku' => 1,
+            'unit_price' => 2,
+            'stock_qty' => 3,
+            'reorder_level' => 4,
+        ];
+    }
+
+    $startIndex = $hasHeaderRow ? 1 : 0;
+    for ($i = $startIndex; $i < count($tableRows); $i++) {
+        $row = array_map(static fn($v) => (string) $v, (array) $tableRows[$i]);
+        $lineNumber = $i + 1;
+
+        if (!array_filter($row, static fn($cell) => trim((string) $cell) !== '')) {
+            $skipped++;
+            continue;
+        }
+
+        $name = trim((string) ($row[$headerMap['name']] ?? ''));
+        $sku = trim((string) ($row[$headerMap['sku']] ?? ''));
+
+        if ($name === '' || $sku === '') {
+            $errors[] = 'Row ' . $lineNumber . ': name and sku are required.';
+            continue;
+        }
+
+        if (isset($seenSkus[strtolower($sku)])) {
+            $errors[] = 'Row ' . $lineNumber . ': duplicate sku in file (' . $sku . ').';
+            continue;
+        }
+
+        $unitPrice = parseFloatValue((string) ($row[$headerMap['unit_price']] ?? ''), null);
+        if ($unitPrice === null) {
+            $errors[] = 'Row ' . $lineNumber . ': unit_price must be a non-negative number.';
+            continue;
+        }
+
+        $stockQty = parseIntValue((string) ($row[$headerMap['stock_qty']] ?? ''), 0);
+        if ($stockQty === null) {
+            $errors[] = 'Row ' . $lineNumber . ': stock_qty must be a non-negative number.';
+            continue;
+        }
+
+        $reorderLevel = parseIntValue((string) ($row[$headerMap['reorder_level']] ?? ''), 5);
+        if ($reorderLevel === null) {
+            $errors[] = 'Row ' . $lineNumber . ': reorder_level must be a non-negative number.';
+            continue;
+        }
+
+        $rows[] = [
+            'name' => $name,
+            'sku' => $sku,
+            'unit_price' => $unitPrice,
+            'stock_qty' => $stockQty,
+            'reorder_level' => $reorderLevel,
+        ];
+
+        $seenSkus[strtolower($sku)] = true;
+    }
+
+    return [
+        'rows' => $rows,
+        'errors' => $errors,
+        'skipped' => $skipped,
+    ];
 }
 ?>
 <!doctype html>
@@ -509,7 +772,8 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
 
         <nav class="menu">
             <?php foreach ($pageController->getPages() as $key => $page): ?>
-                <a class="menu-item <?= $pageController->isActive($key) ? 'active' : '' ?>" href="?page=<?= e($key) ?>">
+                <?php if (!canAccessPage($key, $userRole)) { continue; } ?>
+                <a class="menu-item <?= $currentPage === $key ? 'active' : '' ?>" href="?page=<?= e($key) ?>">
                     <i class="fa-solid <?= e($page['icon']) ?>"></i><?= e($page['title']) ?>
                 </a>
             <?php endforeach; ?>
@@ -517,38 +781,48 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
 
         <div class="sidebar-footer">
             <div class="profile">
-                <span class="avatar">AD</span>
+                <span class="avatar"><?= e($userInitials) ?></span>
                 <div>
-                    <strong>Admin User</strong>
-                    <small>Admin</small>
+                    <strong><?= e($userName) ?></strong>
+                    <small><?= e($userRole) ?></small>
                 </div>
             </div>
-            <a class="logout" href="#" onclick="showLogoutConfirm()"><i class="fa-solid fa-right-from-bracket"></i>Logout</a>
+            <a class="logout" href="#" data-action="showLogoutConfirm"><i class="fa-solid fa-right-from-bracket"></i>Logout</a>
+            <form id="logoutForm" method="post" action="logout.php" style="display:none;">
+                <input type="hidden" name="csrf_token" value="<?= e(getCsrfToken()) ?>">
+            </form>
         </div>
     </aside>
 
     <main class="content">
         <header class="topbar">
             <div class="topbar-left">
-                <button class="hamburger" id="hamburger" onclick="toggleSidebar()">
+                <button class="hamburger" id="hamburger" data-action="toggleSidebar">
                     <i class="fa-solid fa-bars"></i>
                 </button>
                 <strong><?= e($pageTitle) ?></strong>
             </div>
             <div class="topbar-actions">
-                <button class="pill primary" onclick="showAddModal()"><i class="fa-solid fa-plus"></i> Add</button>
+                <button class="pill primary" data-action="showAddModal"><i class="fa-solid fa-plus"></i> Add</button>
                 <span class="pill" id="clock">--:-- --</span>
                 <span class="pill">EN</span>
                 <span class="pill"><i class="fa-solid fa-store"></i> Shop</span>
-                <span class="icon-btn notification-btn" onclick="showNotifications()">
+                <span class="icon-btn notification-btn" data-action="showNotifications">
                     <i class="fa-regular fa-bell"></i>
                     <?php if ($lowStock['count'] > 0): ?>
                         <span class="badge"><?= $lowStock['count'] ?></span>
                     <?php endif; ?>
                 </span>
-                <span class="pill">Admin User</span>
+                <span class="pill"><?= e($userName) ?></span>
             </div>
         </header>
+
+        <?php if ($accessDeniedMessage !== null): ?>
+            <section class="db-warning">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+                <?= e($accessDeniedMessage) ?>
+            </section>
+        <?php endif; ?>
 
         <?php if ($usingDemoData): ?>
             <section class="db-warning">
@@ -588,31 +862,40 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
             </section>
         <?php endif; ?>
 
+        <?php if (is_array($flashFeedback) && isset($flashFeedback['type'], $flashFeedback['message'])): ?>
+            <section class="page-content" style="margin-top: 12px; margin-bottom: 0;">
+                <div class="import-feedback <?= e((string) $flashFeedback['type']) ?>">
+                    <i class="fa-solid fa-circle-info"></i>
+                    <span><?= e((string) $flashFeedback['message']) ?></span>
+                </div>
+            </section>
+        <?php endif; ?>
+
         <?php if ($currentPage === 'dashboard'): ?>
             <!-- Dashboard Content -->
             <section class="stats-grid">
-                <article class="stat-card stat-blue" onclick="window.location='?page=sales'">
+                <article class="stat-card stat-blue" data-action="go" data-value="?page=sales">
                     <div>
                         <p>Total Sales</p>
                         <h2>Tsh <?= moneyFormat($totals['totalSales']) ?></h2>
                     </div>
                     <span><i class="fa-solid fa-chart-line"></i></span>
                 </article>
-                <article class="stat-card stat-green" onclick="window.location='?page=customers'">
+                <article class="stat-card stat-green" data-action="go" data-value="?page=customers">
                     <div>
                         <p>Total Customers</p>
                         <h2><?= moneyFormat($totals['totalCustomers']) ?></h2>
                     </div>
                     <span><i class="fa-solid fa-users"></i></span>
                 </article>
-                <article class="stat-card stat-pink" onclick="window.location='?page=inventory'">
+                <article class="stat-card stat-pink" data-action="go" data-value="?page=inventory">
                     <div>
                         <p>Total Products</p>
                         <h2><?= moneyFormat($totals['totalItems']) ?></h2>
                     </div>
                     <span><i class="fa-solid fa-cube"></i></span>
                 </article>
-                <article class="stat-card stat-orange" onclick="window.location='?page=transactions'">
+                <article class="stat-card stat-orange" data-action="go" data-value="?page=transactions">
                     <div>
                         <p>Transactions Today</p>
                         <h2><?= moneyFormat($totals['transactionsToday']) ?></h2>
@@ -621,16 +904,16 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
                 </article>
             </section>
 
-            <section class="welcome">Welcome to Mchongoma Limited, Admin! Choose a common task below to get started.</section>
+            <section class="welcome">Welcome to Mchongoma Limited, <?= e($userName) ?>! Choose a common task below to get started.</section>
 
             <section class="quick-actions">
-                <button onclick="showNewSaleModal()"><i class="fa-solid fa-cart-plus"></i> Start a New Sale</button>
-                <button onclick="window.location='?page=inventory'"><i class="fa-solid fa-cube"></i> View All Products</button>
-                <button onclick="window.location='?page=customers'"><i class="fa-regular fa-user"></i> View Customers</button>
-                <button onclick="window.location='?page=reports'"><i class="fa-solid fa-file-lines"></i> View All Reports</button>
-                <button onclick="window.location='?page=transactions'"><i class="fa-regular fa-rectangle-list"></i> All Transactions</button>
-                <button onclick="window.location='?page=suppliers'"><i class="fa-solid fa-arrow-right"></i> Manage Suppliers</button>
-                <button onclick="showEndOfDayReport()"><i class="fa-regular fa-calendar-check"></i> End of Day Report</button>
+                <button data-action="showNewSaleModal"><i class="fa-solid fa-cart-plus"></i> Start a New Sale</button>
+                <button data-action="go" data-value="?page=inventory"><i class="fa-solid fa-cube"></i> View All Products</button>
+                <button data-action="go" data-value="?page=customers"><i class="fa-regular fa-user"></i> View Customers</button>
+                <button data-action="go" data-value="?page=reports"><i class="fa-solid fa-file-lines"></i> View All Reports</button>
+                <button data-action="go" data-value="?page=transactions"><i class="fa-regular fa-rectangle-list"></i> All Transactions</button>
+                <button data-action="go" data-value="?page=suppliers"><i class="fa-solid fa-arrow-right"></i> Manage Suppliers</button>
+                <button data-action="showEndOfDayReport"><i class="fa-regular fa-calendar-check"></i> End of Day Report</button>
             </section>
 
             <section class="bottom-grid">
@@ -696,10 +979,13 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
                         <p>Manage your products and stock levels</p>
                     </div>
                     <div class="page-actions">
-                        <button class="btn btn-secondary" onclick="showImportProductsModal()">
+                        <button class="btn btn-secondary" data-action="showImportProductsModal">
                             <i class="fa-solid fa-file-import"></i> Import Excel
                         </button>
-                        <button class="btn btn-primary" onclick="showAddProductModal()">
+                        <a class="btn btn-secondary" href="export_products_xlsx.php">
+                            <i class="fa-solid fa-file-export"></i> Export XLSX
+                        </a>
+                        <button class="btn btn-primary" data-action="showAddProductModal">
                             <i class="fa-solid fa-plus"></i> Add Product
                         </button>
                     </div>
@@ -754,10 +1040,10 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
                                         <?php endif; ?>
                                     </td>
                                     <td>
-                                        <button class="btn-icon" onclick="editProduct(<?= $product['id'] ?>)" title="Edit">
+                                        <button class="btn-icon" data-action="editProduct" data-value="<?= (int) $product['id'] ?>" title="Edit">
                                             <i class="fa-solid fa-pen"></i>
                                         </button>
-                                        <button class="btn-icon danger" onclick="deleteProduct(<?= $product['id'] ?>)" title="Delete">
+                                        <button class="btn-icon danger" data-action="deleteProduct" data-value="<?= (int) $product['id'] ?>" title="Delete">
                                             <i class="fa-solid fa-trash"></i>
                                         </button>
                                     </td>
@@ -776,7 +1062,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
                         <h2>Customer Management</h2>
                         <p>View and manage your customers</p>
                     </div>
-                    <button class="btn btn-primary" onclick="showAddCustomerModal()">
+                    <button class="btn btn-primary" data-action="showAddCustomerModal">
                         <i class="fa-solid fa-plus"></i> Add Customer
                     </button>
                 </div>
@@ -808,13 +1094,13 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
                                     <td>Tsh <?= moneyFormat($customer['total_spent']) ?></td>
                                     <td><?= date('M d, Y', strtotime($customer['created_at'])) ?></td>
                                     <td>
-                                        <button class="btn-icon" onclick="viewCustomer(<?= $customer['id'] ?>)" title="View">
+                                        <button class="btn-icon" data-action="viewCustomer" data-value="<?= (int) $customer['id'] ?>" title="View">
                                             <i class="fa-solid fa-eye"></i>
                                         </button>
-                                        <button class="btn-icon" onclick="editCustomer(<?= $customer['id'] ?>)" title="Edit">
+                                        <button class="btn-icon" data-action="editCustomer" data-value="<?= (int) $customer['id'] ?>" title="Edit">
                                             <i class="fa-solid fa-pen"></i>
                                         </button>
-                                        <button class="btn-icon danger" onclick="deleteCustomer(<?= $customer['id'] ?>)" title="Delete">
+                                        <button class="btn-icon danger" data-action="deleteCustomer" data-value="<?= (int) $customer['id'] ?>" title="Delete">
                                             <i class="fa-solid fa-trash"></i>
                                         </button>
                                     </td>
@@ -834,7 +1120,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
                         <p><?= $currentPage === 'sales' ? 'Create and manage sales' : 'View all transactions' ?></p>
                     </div>
                     <?php if ($currentPage === 'sales'): ?>
-                        <button class="btn btn-primary" onclick="showNewSaleModal()">
+                        <button class="btn btn-primary" data-action="showNewSaleModal">
                             <i class="fa-solid fa-plus"></i> New Sale
                         </button>
                     <?php endif; ?>
@@ -879,10 +1165,10 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
                                     </td>
                                     <td><?= date('M d, Y H:i', strtotime($sale['created_at'])) ?></td>
                                     <td>
-                                        <button class="btn-icon" onclick="viewReceipt('<?= e($sale['transaction_no']) ?>')" title="View Receipt">
+                                        <button class="btn-icon" data-action="viewReceipt" data-value="<?= e($sale['transaction_no']) ?>" title="View Receipt">
                                             <i class="fa-solid fa-receipt"></i>
                                         </button>
-                                        <button class="btn-icon" onclick="printReceipt('<?= e($sale['transaction_no']) ?>')" title="Print">
+                                        <button class="btn-icon" data-action="printReceipt" data-value="<?= e($sale['transaction_no']) ?>" title="Print">
                                             <i class="fa-solid fa-print"></i>
                                         </button>
                                     </td>
@@ -901,35 +1187,38 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
                         <h2>Reports & Analytics</h2>
                         <p>View business insights and generate reports</p>
                     </div>
+                    <a class="btn btn-secondary" href="export_report_pdf.php?type=daily" target="_blank" rel="noopener">
+                        <i class="fa-solid fa-file-pdf"></i> Export Daily PDF
+                    </a>
                 </div>
 
                 <div class="reports-grid">
-                    <article class="report-card" onclick="generateReport('daily')">
+                    <article class="report-card" data-action="generateReport" data-value="daily">
                         <div class="report-icon blue"><i class="fa-solid fa-calendar-day"></i></div>
                         <h3>Daily Sales Report</h3>
                         <p>View today's sales summary and transactions</p>
                     </article>
-                    <article class="report-card" onclick="generateReport('weekly')">
+                    <article class="report-card" data-action="generateReport" data-value="weekly">
                         <div class="report-icon green"><i class="fa-solid fa-calendar-week"></i></div>
                         <h3>Weekly Sales Report</h3>
                         <p>Sales performance for the past 7 days</p>
                     </article>
-                    <article class="report-card" onclick="generateReport('monthly')">
+                    <article class="report-card" data-action="generateReport" data-value="monthly">
                         <div class="report-icon purple"><i class="fa-solid fa-calendar"></i></div>
                         <h3>Monthly Sales Report</h3>
                         <p>Complete monthly breakdown and trends</p>
                     </article>
-                    <article class="report-card" onclick="generateReport('inventory')">
+                    <article class="report-card" data-action="generateReport" data-value="inventory">
                         <div class="report-icon orange"><i class="fa-solid fa-boxes-stacked"></i></div>
                         <h3>Inventory Report</h3>
                         <p>Stock levels and low inventory alerts</p>
                     </article>
-                    <article class="report-card" onclick="generateReport('customers')">
+                    <article class="report-card" data-action="generateReport" data-value="customers">
                         <div class="report-icon pink"><i class="fa-solid fa-users"></i></div>
                         <h3>Customer Report</h3>
                         <p>Customer purchases and loyalty insights</p>
                     </article>
-                    <article class="report-card" onclick="generateReport('profit')">
+                    <article class="report-card" data-action="generateReport" data-value="profit">
                         <div class="report-icon teal"><i class="fa-solid fa-chart-pie"></i></div>
                         <h3>Profit & Loss</h3>
                         <p>Revenue, expenses, and profit margins</p>
@@ -941,7 +1230,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
             <section class="page-content">
                 <div class="content-header">
                     <h2><i class="fa-solid fa-truck"></i> Suppliers Management</h2>
-                    <button class="btn btn-primary" onclick="openAddSupplierModal()">
+                    <button class="btn btn-primary" data-action="openAddSupplierModal">
                         <i class="fa-solid fa-plus"></i> Add Supplier
                     </button>
                 </div>
@@ -973,7 +1262,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
             <section class="page-content">
                 <div class="content-header">
                     <h2><i class="fa-solid fa-users"></i> Employees Management</h2>
-                    <button class="btn btn-primary" onclick="openAddEmployeeModal()">
+                    <button class="btn btn-primary" data-action="openAddEmployeeModal">
                         <i class="fa-solid fa-plus"></i> Add Employee
                     </button>
                 </div>
@@ -1006,7 +1295,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
             <section class="page-content">
                 <div class="content-header">
                     <h2><i class="fa-solid fa-credit-card"></i> Expenses Management</h2>
-                    <button class="btn btn-primary" onclick="openAddExpenseModal()">
+                    <button class="btn btn-primary" data-action="openAddExpenseModal">
                         <i class="fa-solid fa-plus"></i> Add Expense
                     </button>
                 </div>
@@ -1038,7 +1327,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
             <section class="page-content">
                 <div class="content-header">
                     <h2><i class="fa-solid fa-file-lines"></i> Invoices Management</h2>
-                    <button class="btn btn-primary" onclick="openAddInvoiceModal()">
+                    <button class="btn btn-primary" data-action="openAddInvoiceModal">
                         <i class="fa-solid fa-plus"></i> Create Invoice
                     </button>
                 </div>
@@ -1069,7 +1358,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
             <section class="page-content">
                 <div class="content-header">
                     <h2><i class="fa-solid fa-boxes-stacked"></i> Deliveries Management</h2>
-                    <button class="btn btn-primary" onclick="openAddDeliveryModal()">
+                    <button class="btn btn-primary" data-action="openAddDeliveryModal">
                         <i class="fa-solid fa-plus"></i> Add Delivery
                     </button>
                 </div>
@@ -1100,7 +1389,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
             <section class="page-content">
                 <div class="content-header">
                     <h2><i class="fa-solid fa-box"></i> Receiving Management</h2>
-                    <button class="btn btn-primary" onclick="openAddReceivingModal()">
+                    <button class="btn btn-primary" data-action="openAddReceivingModal">
                         <i class="fa-solid fa-plus"></i> Add Receiving
                     </button>
                 </div>
@@ -1131,7 +1420,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
             <section class="page-content">
                 <div class="content-header">
                     <h2><i class="fa-solid fa-rectangle-list"></i> Quotations Management</h2>
-                    <button class="btn btn-primary" onclick="openAddQuotationModal()">
+                    <button class="btn btn-primary" data-action="openAddQuotationModal">
                         <i class="fa-solid fa-plus"></i> Create Quotation
                     </button>
                 </div>
@@ -1162,7 +1451,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
             <section class="page-content">
                 <div class="content-header">
                     <h2><i class="fa-solid fa-cart-plus"></i> Purchase Orders Management</h2>
-                    <button class="btn btn-primary" onclick="openAddPOModal()">
+                    <button class="btn btn-primary" data-action="openAddPOModal">
                         <i class="fa-solid fa-plus"></i> Create PO
                     </button>
                 </div>
@@ -1193,7 +1482,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
             <section class="page-content">
                 <div class="content-header">
                     <h2><i class="fa-solid fa-rotate-left"></i> Returns Management</h2>
-                    <button class="btn btn-primary" onclick="openAddReturnModal()">
+                    <button class="btn btn-primary" data-action="openAddReturnModal">
                         <i class="fa-solid fa-plus"></i> Add Return
                     </button>
                 </div>
@@ -1225,7 +1514,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
             <section class="page-content">
                 <div class="content-header">
                     <h2><i class="fa-solid fa-calendar"></i> Appointments Management</h2>
-                    <button class="btn btn-primary" onclick="openAddAppointmentModal()">
+                    <button class="btn btn-primary" data-action="openAddAppointmentModal">
                         <i class="fa-solid fa-plus"></i> Schedule Appointment
                     </button>
                 </div>
@@ -1256,7 +1545,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
             <section class="page-content">
                 <div class="content-header">
                     <h2><i class="fa-solid fa-location-dot"></i> Store Locations</h2>
-                    <button class="btn btn-primary" onclick="openAddLocationModal()">
+                    <button class="btn btn-primary" data-action="openAddLocationModal">
                         <i class="fa-solid fa-plus"></i> Add Location
                     </button>
                 </div>
@@ -1288,7 +1577,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
             <section class="page-content">
                 <div class="content-header">
                     <h2><i class="fa-solid fa-message"></i> Messages</h2>
-                    <button class="btn btn-primary" onclick="openComposeMessageModal()">
+                    <button class="btn btn-primary" data-action="openComposeMessageModal">
                         <i class="fa-solid fa-pen-to-square"></i> New Message
                     </button>
                 </div>
@@ -1340,7 +1629,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
                                 <label>Store Address</label>
                                 <textarea placeholder="Enter store address" class="form-control" rows="3"></textarea>
                             </div>
-                            <button type="button" class="btn btn-primary">Save Settings</button>
+                            <button type="button" class="btn btn-primary" data-action="saveSettings">Save Settings</button>
                         </form>
                     </div>
                 </div>
@@ -1353,7 +1642,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
                     <i class="fa-solid fa-hammer"></i>
                     <h2><?= e($pageTitle) ?></h2>
                     <p>This section is under construction and will be available soon.</p>
-                    <button class="btn btn-primary" onclick="window.location='?page=dashboard'">
+                    <button class="btn btn-primary" data-action="go" data-value="?page=dashboard">
                         <i class="fa-solid fa-arrow-left"></i> Back to Dashboard
                     </button>
                 </div>
@@ -1363,13 +1652,13 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
 </div>
 
 <!-- Modal Overlay -->
-<div class="modal-overlay" id="modalOverlay" onclick="closeModal()"></div>
+<div class="modal-overlay" id="modalOverlay" data-action="closeModal"></div>
 
 <!-- Generic Modal -->
 <div class="modal" id="modal">
     <div class="modal-header">
         <h3 id="modalTitle">Modal Title</h3>
-        <button class="modal-close" onclick="closeModal()">&times;</button>
+        <button class="modal-close" data-action="closeModal">&times;</button>
     </div>
     <div class="modal-body" id="modalBody">
         <!-- Dynamic content -->
@@ -1383,7 +1672,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
 <div class="notification-panel" id="notificationPanel">
     <div class="notification-header">
         <h4>Notifications</h4>
-        <button onclick="closeNotifications()">&times;</button>
+        <button data-action="closeNotifications">&times;</button>
     </div>
     <div class="notification-list">
         <?php if ($lowStock['count'] > 0): ?>
@@ -1410,14 +1699,11 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
 <div class="toast-container" id="toastContainer"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<script>
-    window.salesChartData = {
-        week: <?= json_encode($weeklySales, JSON_THROW_ON_ERROR) ?>,
-        month: <?= json_encode($monthlySales, JSON_THROW_ON_ERROR) ?>
-    };
-    window.currentPage = '<?= e($currentPage) ?>';
-    window.csrfToken = <?= json_encode(getCsrfToken(), JSON_THROW_ON_ERROR) ?>;
-</script>
+<script type="application/json" id="appConfig"><?= htmlspecialchars(json_encode([
+    'salesChartData' => ['week' => $weeklySales, 'month' => $monthlySales],
+    'currentPage' => $currentPage,
+    'csrfToken' => getCsrfToken(),
+], JSON_THROW_ON_ERROR), ENT_QUOTES, 'UTF-8') ?></script>
 <script src="assets/js/dashboard.js"></script>
 </body>
 </html>

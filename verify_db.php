@@ -1,4 +1,14 @@
 <?php
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/config/database.php';
+
+if (isProductionEnvironment()) {
+    http_response_code(404);
+    exit('Not found');
+}
+
 // Quick database check script
 $host = '127.0.0.1';
 $username = 'root';

@@ -1,3 +1,15 @@
+<?php
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/../config/database.php';
+
+if (isProductionEnvironment()) {
+    http_response_code(404);
+    exit('Not found');
+}
+?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>

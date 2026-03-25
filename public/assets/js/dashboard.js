@@ -24,11 +24,27 @@ function isValidIdentifier(str) {
     return /^[A-Za-z0-9\-_]+$/.test(str);
 }
 
+function getAppConfig() {
+    const configEl = document.getElementById('appConfig');
+    if (!configEl) {
+        return { salesChartData: { week: { labels: [], values: [] }, month: { labels: [], values: [] } }, currentPage: 'dashboard', csrfToken: '' };
+    }
+
+    try {
+        return JSON.parse(configEl.textContent || '{}');
+    } catch (error) {
+        return { salesChartData: { week: { labels: [], values: [] }, month: { labels: [], values: [] } }, currentPage: 'dashboard', csrfToken: '' };
+    }
+}
+
+const APP_CONFIG = getAppConfig();
+
 // ============================================
 // INITIALIZATION
 // ============================================
 
 document.addEventListener('DOMContentLoaded', function() {
+    initActionBindings();
     initClock();
     initChart();
     initChartTabs();
@@ -72,7 +88,7 @@ function initChart() {
     const ctx = document.getElementById('salesChart');
     if (!ctx) return;
 
-    const chartData = window.salesChartData?.week || { labels: [], values: [] };
+    const chartData = APP_CONFIG.salesChartData?.week || { labels: [], values: [] };
 
     salesChart = new Chart(ctx, {
         type: 'bar',
@@ -154,7 +170,7 @@ function initChartTabs() {
 
             // Update chart data
             const period = this.dataset.period;
-            const chartData = window.salesChartData?.[period] || { labels: [], values: [] };
+            const chartData = APP_CONFIG.salesChartData?.[period] || { labels: [], values: [] };
 
             if (salesChart) {
                 salesChart.data.labels = chartData.labels;
@@ -197,6 +213,100 @@ function initSidebarOverlay() {
         overlay.onclick = closeSidebar;
         document.body.appendChild(overlay);
     }
+}
+
+function initActionBindings() {
+    document.addEventListener('click', function(event) {
+        const target = event.target.closest('[data-action]');
+        if (!target) {
+            return;
+        }
+
+        const action = target.getAttribute('data-action') || '';
+        const value = target.getAttribute('data-value') || '';
+
+        if (target.tagName === 'A' || target.tagName === 'BUTTON' || action === 'go') {
+            event.preventDefault();
+        }
+
+        const actionMap = {
+            toggleSidebar,
+            showAddModal,
+            showNotifications,
+            showLogoutConfirm,
+            showNewSaleModal,
+            showEndOfDayReport,
+            showImportProductsModal,
+            showAddProductModal,
+            showAddCustomerModal,
+            openAddSupplierModal,
+            openAddEmployeeModal,
+            openAddExpenseModal,
+            openAddInvoiceModal,
+            openAddDeliveryModal,
+            openAddReceivingModal,
+            openAddQuotationModal,
+            openAddPOModal,
+            openAddReturnModal,
+            openAddAppointmentModal,
+            openAddLocationModal,
+            openComposeMessageModal,
+            saveSettings,
+            closeModal,
+            closeNotifications,
+        };
+
+        if (action === 'go') {
+            if (/^\?page=[A-Za-z0-9\-]+$/.test(value)) {
+                window.location.href = value;
+            }
+            return;
+        }
+
+        if (action === 'generateReport') {
+            generateReport(value);
+            return;
+        }
+
+        if (action === 'editProduct') {
+            editProduct(parseInt(value, 10));
+            return;
+        }
+
+        if (action === 'deleteProduct') {
+            deleteProduct(parseInt(value, 10));
+            return;
+        }
+
+        if (action === 'viewCustomer') {
+            viewCustomer(parseInt(value, 10));
+            return;
+        }
+
+        if (action === 'editCustomer') {
+            editCustomer(parseInt(value, 10));
+            return;
+        }
+
+        if (action === 'deleteCustomer') {
+            deleteCustomer(parseInt(value, 10));
+            return;
+        }
+
+        if (action === 'viewReceipt') {
+            viewReceipt(value);
+            return;
+        }
+
+        if (action === 'printReceipt') {
+            printReceipt(value);
+            return;
+        }
+
+        if (actionMap[action]) {
+            actionMap[action]();
+        }
+    });
 }
 
 // ============================================
@@ -293,23 +403,23 @@ function closeModal() {
 function showAddModal() {
     const content = `
         <div class="quick-add-grid">
-            <button class="quick-add-item" onclick="closeModal(); showNewSaleModal();">
+            <button class="quick-add-item" data-action="quickNewSale">
                 <i class="fa-solid fa-cart-plus"></i>
                 <span>New Sale</span>
             </button>
-            <button class="quick-add-item" onclick="closeModal(); showAddProductModal();">
+            <button class="quick-add-item" data-action="quickAddProduct">
                 <i class="fa-solid fa-cube"></i>
                 <span>New Product</span>
             </button>
-            <button class="quick-add-item" onclick="closeModal(); showImportProductsModal();">
+            <button class="quick-add-item" data-action="quickImportProducts">
                 <i class="fa-solid fa-file-import"></i>
                 <span>Import Products</span>
             </button>
-            <button class="quick-add-item" onclick="closeModal(); showAddCustomerModal();">
+            <button class="quick-add-item" data-action="quickAddCustomer">
                 <i class="fa-solid fa-user-plus"></i>
                 <span>New Customer</span>
             </button>
-            <button class="quick-add-item" onclick="closeModal(); window.location='?page=expenses';">
+            <button class="quick-add-item" data-action="quickGoExpenses">
                 <i class="fa-solid fa-receipt"></i>
                 <span>New Expense</span>
             </button>
@@ -333,11 +443,37 @@ function showAddModal() {
     openModal('Quick Add', content, [
         { text: 'Cancel', class: 'btn-secondary', onclick: 'closeModal()' }
     ]);
+
+    const modalBody = document.getElementById('modalBody');
+    modalBody?.querySelector('[data-action="quickNewSale"]')?.addEventListener('click', () => {
+        closeModal();
+        showNewSaleModal();
+    });
+    modalBody?.querySelector('[data-action="quickAddProduct"]')?.addEventListener('click', () => {
+        closeModal();
+        showAddProductModal();
+    });
+    modalBody?.querySelector('[data-action="quickImportProducts"]')?.addEventListener('click', () => {
+        closeModal();
+        showImportProductsModal();
+    });
+    modalBody?.querySelector('[data-action="quickAddCustomer"]')?.addEventListener('click', () => {
+        closeModal();
+        showAddCustomerModal();
+    });
+    modalBody?.querySelector('[data-action="quickGoExpenses"]')?.addEventListener('click', () => {
+        closeModal();
+        window.location.href = '?page=expenses';
+    });
 }
 
 function showNewSaleModal() {
+    const csrfToken = escapeHtml(APP_CONFIG.csrfToken || '');
     const content = `
-        <form id="newSaleForm" onsubmit="createSale(event)">
+        <form id="newSaleForm" method="POST" action="?page=sales">
+            <input type="hidden" name="action" value="create_entity">
+            <input type="hidden" name="entity" value="sale">
+            <input type="hidden" name="csrf_token" value="${csrfToken}">
             <div class="form-group">
                 <label>Customer</label>
                 <select name="customer_id" required>
@@ -366,8 +502,12 @@ function showNewSaleModal() {
 }
 
 function showAddProductModal() {
+    const csrfToken = escapeHtml(APP_CONFIG.csrfToken || '');
     const content = `
-        <form id="addProductForm" onsubmit="createProduct(event)">
+        <form id="addProductForm" method="POST" action="?page=inventory">
+            <input type="hidden" name="action" value="create_entity">
+            <input type="hidden" name="entity" value="product">
+            <input type="hidden" name="csrf_token" value="${csrfToken}">
             <div class="form-group">
                 <label>Product Name</label>
                 <input type="text" name="name" placeholder="Enter product name" required>
@@ -397,21 +537,21 @@ function showAddProductModal() {
 }
 
 function showImportProductsModal() {
-    const csrfToken = escapeHtml(window.csrfToken || '');
+    const csrfToken = escapeHtml(APP_CONFIG.csrfToken || '');
 
     const content = `
         <form id="importProductsForm" action="?page=inventory" method="POST" enctype="multipart/form-data">
             <input type="hidden" name="action" value="import_products">
             <input type="hidden" name="csrf_token" value="${csrfToken}">
             <div class="form-group">
-                <label>Excel CSV File</label>
-                <input type="file" name="product_import_file" accept=".csv,text/csv,application/vnd.ms-excel" required>
+                <label>Excel File (.xlsx or .csv)</label>
+                <input type="file" name="product_import_file" accept=".xlsx,.csv,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
             </div>
             <div class="form-group" style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:8px;padding:12px;">
                 <small style="color:#4B5563;line-height:1.5;display:block;">
-                    Save your Excel sheet as CSV before upload.<br>
+                    Upload Excel .xlsx directly, or use CSV.<br>
                     Expected columns: <strong>name, sku, unit_price, stock_qty, reorder_level</strong>.<br>
-                    Max file size is 2MB and max 5000 data rows.<br>
+                    Max file size is 5MB and max 5000 data rows.<br>
                     The importer creates new products and updates existing ones by SKU.
                 </small>
             </div>
@@ -425,8 +565,12 @@ function showImportProductsModal() {
 }
 
 function showAddCustomerModal() {
+    const csrfToken = escapeHtml(APP_CONFIG.csrfToken || '');
     const content = `
-        <form id="addCustomerForm" onsubmit="createCustomer(event)">
+        <form id="addCustomerForm" method="POST" action="?page=customers">
+            <input type="hidden" name="action" value="create_entity">
+            <input type="hidden" name="entity" value="customer">
+            <input type="hidden" name="csrf_token" value="${csrfToken}">
             <div class="form-group">
                 <label>Customer Name</label>
                 <input type="text" name="name" placeholder="Enter customer name" required>
@@ -441,6 +585,251 @@ function showAddCustomerModal() {
         { text: 'Cancel', class: 'btn-secondary', onclick: 'closeModal()' },
         { text: 'Add Customer', class: 'btn-primary', onclick: 'document.getElementById("addCustomerForm").requestSubmit()' }
     ]);
+}
+
+function openEntityModal(config) {
+    const formId = `${config.key}Form`;
+    const csrfToken = escapeHtml(APP_CONFIG.csrfToken || '');
+    const fieldsMarkup = config.fields.map(field => {
+        if (field.type === 'textarea') {
+            return `
+                <div class="form-group">
+                    <label>${field.label}</label>
+                    <textarea name="${field.name}" placeholder="${field.placeholder || ''}" rows="${field.rows || 3}" ${field.required ? 'required' : ''}></textarea>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="form-group">
+                <label>${field.label}</label>
+                <input type="${field.type || 'text'}" name="${field.name}" placeholder="${field.placeholder || ''}" ${field.required ? 'required' : ''}>
+            </div>
+        `;
+    }).join('');
+
+    const content = `
+        <form id="${formId}" method="POST" action="?page=${escapeHtml(config.page || APP_CONFIG.currentPage || 'dashboard')}">
+            <input type="hidden" name="action" value="create_entity">
+            <input type="hidden" name="entity" value="${escapeHtml(config.entity)}">
+            <input type="hidden" name="csrf_token" value="${csrfToken}">
+            ${fieldsMarkup}
+        </form>
+    `;
+
+    openModal(config.title, content, [
+        { text: 'Cancel', class: 'btn-secondary', onclick: 'closeModal()' },
+        { text: config.submitText || 'Save', class: 'btn-primary', onclick: `document.getElementById("${formId}").requestSubmit()` }
+    ]);
+
+}
+
+function openAddSupplierModal() {
+    openEntityModal({
+        key: 'supplier',
+        page: 'suppliers',
+        entity: 'supplier',
+        title: 'Add Supplier',
+        entityName: 'Supplier',
+        submitText: 'Add Supplier',
+        successMessage: 'Supplier added successfully!',
+        fields: [
+            { label: 'Supplier Name', name: 'name', required: true, placeholder: 'Enter supplier name' },
+            { label: 'Contact Person', name: 'contact_person', placeholder: 'Enter contact person' },
+            { label: 'Phone', name: 'phone', type: 'tel', placeholder: 'Enter phone number' },
+            { label: 'Email', name: 'email', type: 'email', placeholder: 'Enter email address' },
+            { label: 'Address', name: 'address', type: 'textarea', placeholder: 'Enter address', rows: 3 },
+        ]
+    });
+}
+
+function openAddEmployeeModal() {
+    openEntityModal({
+        key: 'employee',
+        page: 'employees',
+        entity: 'employee',
+        title: 'Add Employee',
+        entityName: 'Employee',
+        submitText: 'Add Employee',
+        successMessage: 'Employee added successfully!',
+        fields: [
+            { label: 'Employee Name', name: 'name', required: true, placeholder: 'Enter employee name' },
+            { label: 'Position', name: 'position', placeholder: 'e.g. Cashier' },
+            { label: 'Phone', name: 'phone', type: 'tel', placeholder: 'Enter phone number' },
+            { label: 'Email', name: 'email', type: 'email', placeholder: 'Enter email address' },
+            { label: 'Salary (Tsh)', name: 'salary', type: 'number', placeholder: 'Enter salary' },
+        ]
+    });
+}
+
+function openAddExpenseModal() {
+    openEntityModal({
+        key: 'expense',
+        page: 'expenses',
+        entity: 'expense',
+        title: 'Record Expense',
+        entityName: 'Expense',
+        submitText: 'Save Expense',
+        successMessage: 'Expense saved successfully!',
+        fields: [
+            { label: 'Description', name: 'description', required: true, placeholder: 'Expense description' },
+            { label: 'Amount (Tsh)', name: 'amount', type: 'number', required: true, placeholder: 'Enter amount' },
+            { label: 'Category', name: 'category', placeholder: 'Utilities, Transport, etc.' },
+        ]
+    });
+}
+
+function openAddInvoiceModal() {
+    openEntityModal({
+        key: 'invoice',
+        page: 'invoices',
+        entity: 'invoice',
+        title: 'Create Invoice',
+        entityName: 'Invoice',
+        submitText: 'Create Invoice',
+        successMessage: 'Invoice created successfully!',
+        fields: [
+            { label: 'Customer ID', name: 'customer_id', type: 'number', required: true, placeholder: 'Enter customer ID' },
+            { label: 'Amount (Tsh)', name: 'amount', type: 'number', required: true, placeholder: 'Enter amount' },
+        ]
+    });
+}
+
+function openAddDeliveryModal() {
+    openEntityModal({
+        key: 'delivery',
+        page: 'deliveries',
+        entity: 'delivery',
+        title: 'Schedule Delivery',
+        entityName: 'Delivery',
+        submitText: 'Save Delivery',
+        successMessage: 'Delivery saved successfully!',
+        fields: [
+            { label: 'Customer ID', name: 'customer_id', type: 'number', required: true, placeholder: 'Enter customer ID' },
+            { label: 'Amount (Tsh)', name: 'amount', type: 'number', placeholder: 'Enter amount' },
+        ]
+    });
+}
+
+function openAddReceivingModal() {
+    openEntityModal({
+        key: 'receiving',
+        page: 'receiving',
+        entity: 'receiving',
+        title: 'Record Receiving',
+        entityName: 'Receiving',
+        submitText: 'Save Receiving',
+        successMessage: 'Receiving record saved successfully!',
+        fields: [
+            { label: 'Supplier ID', name: 'supplier_id', type: 'number', required: true, placeholder: 'Enter supplier ID' },
+            { label: 'Amount (Tsh)', name: 'amount', type: 'number', placeholder: 'Enter amount' },
+        ]
+    });
+}
+
+function openAddQuotationModal() {
+    openEntityModal({
+        key: 'quotation',
+        page: 'quotations',
+        entity: 'quotation',
+        title: 'Create Quotation',
+        entityName: 'Quotation',
+        submitText: 'Create Quotation',
+        successMessage: 'Quotation created successfully!',
+        fields: [
+            { label: 'Customer ID', name: 'customer_id', type: 'number', required: true, placeholder: 'Enter customer ID' },
+            { label: 'Amount (Tsh)', name: 'amount', type: 'number', required: true, placeholder: 'Enter amount' },
+        ]
+    });
+}
+
+function openAddPOModal() {
+    openEntityModal({
+        key: 'purchaseOrder',
+        page: 'purchase-orders',
+        entity: 'purchase_order',
+        title: 'Create Purchase Order',
+        entityName: 'Purchase Order',
+        submitText: 'Create PO',
+        successMessage: 'Purchase order created successfully!',
+        fields: [
+            { label: 'Supplier ID', name: 'supplier_id', type: 'number', required: true, placeholder: 'Enter supplier ID' },
+            { label: 'Amount (Tsh)', name: 'amount', type: 'number', required: true, placeholder: 'Enter amount' },
+        ]
+    });
+}
+
+function openAddReturnModal() {
+    openEntityModal({
+        key: 'return',
+        page: 'returns',
+        entity: 'return',
+        title: 'Record Return',
+        entityName: 'Return',
+        submitText: 'Save Return',
+        successMessage: 'Return recorded successfully!',
+        fields: [
+            { label: 'Product ID', name: 'product_id', type: 'number', required: true, placeholder: 'Enter product ID' },
+            { label: 'Quantity', name: 'quantity', type: 'number', required: true, placeholder: 'Enter quantity' },
+            { label: 'Reason', name: 'reason', type: 'textarea', placeholder: 'Optional reason', rows: 3 },
+        ]
+    });
+}
+
+function openAddAppointmentModal() {
+    openEntityModal({
+        key: 'appointment',
+        page: 'appointments',
+        entity: 'appointment',
+        title: 'Schedule Appointment',
+        entityName: 'Appointment',
+        submitText: 'Save Appointment',
+        successMessage: 'Appointment scheduled successfully!',
+        fields: [
+            { label: 'Title', name: 'title', required: true, placeholder: 'Appointment title' },
+            { label: 'Customer ID', name: 'customer_id', type: 'number', required: true, placeholder: 'Enter customer ID' },
+            { label: 'Date & Time', name: 'appointment_date', type: 'datetime-local', required: true, placeholder: '' },
+        ]
+    });
+}
+
+function openAddLocationModal() {
+    openEntityModal({
+        key: 'location',
+        page: 'locations',
+        entity: 'location',
+        title: 'Add Location',
+        entityName: 'Location',
+        submitText: 'Save Location',
+        successMessage: 'Location added successfully!',
+        fields: [
+            { label: 'Location Name', name: 'name', required: true, placeholder: 'Enter location name' },
+            { label: 'Address', name: 'address', type: 'textarea', required: true, placeholder: 'Enter address', rows: 3 },
+            { label: 'City', name: 'city', placeholder: 'Enter city' },
+            { label: 'Phone', name: 'phone', type: 'tel', placeholder: 'Enter phone' },
+        ]
+    });
+}
+
+function openComposeMessageModal() {
+    openEntityModal({
+        key: 'message',
+        page: 'messages',
+        entity: 'message',
+        title: 'Compose Message',
+        entityName: 'Message',
+        submitText: 'Send Message',
+        successMessage: 'Message sent successfully!',
+        fields: [
+            { label: 'Recipient', name: 'recipient', required: true, placeholder: 'recipient@example.com' },
+            { label: 'Subject', name: 'subject', required: true, placeholder: 'Message subject' },
+            { label: 'Message', name: 'message', type: 'textarea', required: true, placeholder: 'Type your message', rows: 4 },
+        ]
+    });
+}
+
+function saveSettings() {
+    showToast('success', 'Settings saved successfully!');
 }
 
 function showEndOfDayReport() {
@@ -706,15 +1095,24 @@ function generateReport(type) {
         customers: 'Customer',
         profit: 'Profit & Loss'
     };
-    showToast('success', `Generating ${names[type]} Report...`);
+    if (!names[type]) {
+        showToast('error', 'Invalid report type');
+        return;
+    }
+
+    window.open(`export_report_pdf.php?type=${encodeURIComponent(type)}`, '_blank', 'noopener');
+    showToast('success', `Exporting ${names[type]} Report PDF...`);
 }
 
 function logout() {
     closeModal();
-    showToast('success', 'Logging out...');
-    setTimeout(() => {
-        window.location.href = '?page=dashboard';
-    }, 1500);
+    const logoutForm = document.getElementById('logoutForm');
+    if (logoutForm) {
+        logoutForm.requestSubmit();
+        return;
+    }
+
+    window.location.href = 'login.php';
 }
 
 // ============================================
