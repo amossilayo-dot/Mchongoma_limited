@@ -39,11 +39,407 @@ function getAppConfig() {
 
 const APP_CONFIG = getAppConfig();
 
+const I18N_TEXT = {
+    'Dashboard': 'Dashibodi',
+    'Inventory': 'Hesabu',
+    'Customers': 'Wateja',
+    'Suppliers': 'Wasambazaji',
+    'Reports': 'Ripoti',
+    'Receiving': 'Mapokezi',
+    'Sales': 'Mauzo',
+    'Deliveries': 'Uwasilishaji',
+    'Expenses': 'Matumizi',
+    'Appointments': 'Miadi',
+    'Employees': 'Wafanyakazi',
+    'Store Config': 'Mipangilio',
+    'Invoices': 'Ankara',
+    'Quotations': 'Nukuu',
+    'Purchase Orders': 'Oda za Manunuzi',
+    'Returns': 'Marejesho',
+    'Locations': 'Matawi',
+    'Messages': 'Ujumbe',
+    'Logout': 'Toka',
+    'Add': 'Ongeza',
+    'Shop': 'Duka',
+    'Product Inventory': 'Hesabu ya Bidhaa',
+    'Manage your products and stock levels': 'Simamia bidhaa na viwango vya stoo',
+    'Import Excel': 'Ingiza Excel',
+    'Export XLSX': 'Hamisha XLSX',
+    'Add Product': 'Ongeza Bidhaa',
+    'Search products...': 'Tafuta bidhaa...',
+    'All Products': 'Bidhaa Zote',
+    'Low Stock Only': 'Stoo Ndogo Tu',
+    'In Stock': 'Stoo Ipo',
+    'Product Name': 'Jina la Bidhaa',
+    'Stock Qty': 'Kiasi Stoo',
+    'Reorder Level': 'Kiwango cha Kuagiza',
+    'Unit Price': 'Bei ya Kipande',
+    'Status': 'Hali',
+    'Actions': 'Vitendo',
+    'Low Stock': 'Stoo Ndogo',
+    'Customer Management': 'Usimamizi wa Wateja',
+    'View and manage your customers': 'Tazama na simamia wateja wako',
+    'Add Customer': 'Ongeza Mteja',
+    'Search customers...': 'Tafuta wateja...',
+    'Customer Name': 'Jina la Mteja',
+    'Phone': 'Simu',
+    'Total Orders': 'Jumla ya Oda',
+    'Total Spent': 'Jumla Iliyotumika',
+    'Member Since': 'Mwanachama Tangu',
+    'Point of Sale': 'Sehemu ya Mauzo',
+    'Create and manage sales': 'Unda na simamia mauzo',
+    'New Sale': 'Uuzaji Mpya',
+    'Transaction History': 'Historia ya Miamala',
+    'View all transactions': 'Tazama miamala yote',
+    'Search transactions...': 'Tafuta miamala...',
+    'All Payments': 'Malipo Yote',
+    'Transaction #': 'Namba ya Muamala',
+    'Payment Method': 'Njia ya Malipo',
+    'Date & Time': 'Tarehe na Muda',
+    'View Receipt': 'Tazama Risiti',
+    'Print': 'Chapisha',
+    'Reports & Analytics': 'Ripoti na Uchambuzi',
+    'View business insights and generate reports': 'Tazama takwimu za biashara na toa ripoti',
+    'Daily Sales Report': 'Ripoti ya Mauzo ya Siku',
+    "View today's sales summary and transactions": 'Tazama muhtasari wa mauzo ya leo na miamala',
+    'Weekly Sales Report': 'Ripoti ya Mauzo ya Wiki',
+    'Sales performance for the past 7 days': 'Utendaji wa mauzo kwa siku 7 zilizopita',
+    'Monthly Sales Report': 'Ripoti ya Mauzo ya Mwezi',
+    'Complete monthly breakdown and trends': 'Muhtasari wa mwezi na mwelekeo',
+    'Inventory Report': 'Ripoti ya Hesabu',
+    'Stock levels and low inventory alerts': 'Viwango vya stoo na tahadhari za stoo ndogo',
+    'Customer Report': 'Ripoti ya Wateja',
+    'Customer purchases and loyalty insights': 'Manunuzi ya wateja na uaminifu',
+    'Profit & Loss': 'Faida na Hasara',
+    'Revenue, expenses, and profit margins': 'Mapato, matumizi na kiwango cha faida',
+    'Suppliers Management': 'Usimamizi wa Wasambazaji',
+    'Add Supplier': 'Ongeza Msambazaji',
+    'No suppliers added yet': 'Hakuna msambazaji aliyeongezwa bado',
+    'Employees Management': 'Usimamizi wa Wafanyakazi',
+    'Add Employee': 'Ongeza Mfanyakazi',
+    'No employees added yet': 'Hakuna mfanyakazi aliyeongezwa bado',
+    'Expenses Management': 'Usimamizi wa Matumizi',
+    'Add Expense': 'Ongeza Matumizi',
+    'No expenses recorded yet': 'Hakuna matumizi yaliyorekodiwa bado',
+    'Invoices Management': 'Usimamizi wa Ankara',
+    'Create Invoice': 'Unda Ankara',
+    'No invoices created yet': 'Hakuna ankara iliyoundwa bado',
+    'Deliveries Management': 'Usimamizi wa Uwasilishaji',
+    'Add Delivery': 'Ongeza Uwasilishaji',
+    'No deliveries recorded yet': 'Hakuna uwasilishaji uliorekodiwa bado',
+    'Receiving Management': 'Usimamizi wa Mapokezi',
+    'Add Receiving': 'Ongeza Mapokezi',
+    'No receiving records yet': 'Hakuna rekodi za mapokezi bado',
+    'Quotations Management': 'Usimamizi wa Nukuu',
+    'Create Quotation': 'Unda Nukuu',
+    'No quotations created yet': 'Hakuna nukuu iliyoundwa bado',
+    'Purchase Orders Management': 'Usimamizi wa Oda za Manunuzi',
+    'Create PO': 'Unda Oda',
+    'No purchase orders created yet': 'Hakuna oda ya manunuzi iliyoundwa bado',
+    'Returns Management': 'Usimamizi wa Marejesho',
+    'Add Return': 'Ongeza Rejesho',
+    'No returns recorded yet': 'Hakuna marejesho yaliyorekodiwa bado',
+    'Appointments Management': 'Usimamizi wa Miadi',
+    'Schedule Appointment': 'Panga Miadi',
+    'No appointments scheduled yet': 'Hakuna miadi iliyopangwa bado',
+    'Store Locations': 'Matawi ya Duka',
+    'No locations added yet': 'Hakuna tawi lililoongezwa bado',
+    'Messages': 'Ujumbe',
+    'New Message': 'Ujumbe Mpya',
+    'No messages yet': 'Hakuna ujumbe bado',
+    'Store Name': 'Jina la Duka',
+    'Store Email': 'Barua Pepe ya Duka',
+    'Store Phone': 'Simu ya Duka',
+    'Store Address': 'Anwani ya Duka',
+    'Default City': 'Mji Chaguo-msingi',
+    'Starting Amount (Tsh)': 'Kiasi cha Kuanza (Tsh)',
+    'Profile': 'Wasifu',
+    'Setup': 'Mipangilio',
+    'Cash': 'Pesa Taslimu',
+    'Add Location': 'Ongeza Tawi',
+    'Save': 'Hifadhi',
+    'Cash, city, branches.': 'Pesa, mji, matawi.',
+    'Settings saved successfully!': 'Mipangilio imehifadhiwa vizuri!',
+    'Quick Add': 'Ongeza Haraka',
+    'Cancel': 'Ghairi',
+    'Create New Sale': 'Unda Uuzaji Mpya',
+    'Customer': 'Mteja',
+    'Amount (Tsh)': 'Kiasi (Tsh)',
+    'Enter amount': 'Weka kiasi',
+    'Create Sale': 'Unda Uuzaji',
+    'Add New Product': 'Ongeza Bidhaa Mpya',
+    'SKU': 'SKU',
+    'Unit Price (Tsh)': 'Bei ya Kipande (Tsh)',
+    'Stock Quantity': 'Kiasi cha Stoo',
+    'Reorder Level': 'Kiwango cha Kuagiza',
+    'Add New Customer': 'Ongeza Mteja Mpya',
+    'Phone Number': 'Namba ya Simu',
+    'Record Expense': 'Rekodi Matumizi',
+    'Description': 'Maelezo',
+    'Category': 'Kundi',
+    'Compose Message': 'Andika Ujumbe',
+    'Recipient': 'Mpokeaji',
+    'Subject': 'Mada',
+    'Message': 'Ujumbe',
+    'Confirm Logout': 'Thibitisha Kutoka',
+    'Are you sure you want to logout?': 'Una uhakika unataka kutoka?',
+    'End of Day Summary': 'Muhtasari wa Mwisho wa Siku',
+    'Close Day': 'Funga Siku',
+    'Notifications': 'Arifa',
+    'Low Stock Alert': 'Tahadhari ya Stoo Ndogo',
+    'products need restocking': 'bidhaa zinahitaji kujazwa stoo',
+    'All Good!': 'Kila kitu sawa!',
+    'No alerts at this time': 'Hakuna tahadhari kwa sasa',
+    'Back to Dashboard': 'Rudi Dashibodi',
+    'This section is under construction and will be available soon.': 'Sehemu hii inaandaliwa na itapatikana hivi karibuni.',
+    'Welcome to Mchongoma Limited,': 'Karibu Mchongoma Limited,',
+    'Choose a common task below to get started.': 'Chagua kazi hapa chini kuanza.',
+    'Start a New Sale': 'Anza Uuzaji Mpya',
+    'View All Products': 'Tazama Bidhaa Zote',
+    'View Customers': 'Tazama Wateja',
+    'View All Reports': 'Tazama Ripoti Zote',
+    'All Transactions': 'Miamala Yote',
+    'Manage Suppliers': 'Simamia Wasambazaji',
+    'End of Day Report': 'Ripoti ya Mwisho wa Siku',
+    'Total Sales': 'Jumla ya Mauzo',
+    'Total Customers': 'Jumla ya Wateja',
+    'Total Products': 'Jumla ya Bidhaa',
+    'Transactions Today': 'Miamala ya Leo',
+    'Setup Check': 'Ukaguzi wa Mfumo',
+    'PDO MySQL Driver': 'Kifaa cha PDO MySQL',
+    'MySQL Connection': 'Muunganisho wa MySQL',
+    'Core Tables': 'Jedwali Muhimu',
+    'Loaded': 'Imepakiwa',
+    'Missing': 'Haipo',
+    'Connected': 'Imeunganishwa',
+    'Failed': 'Imeshindwa',
+    'Ready': 'Tayari',
+    'If any item shows Missing/Failed, enable pdo_mysql in php.ini, restart Apache, start MySQL, and import sql/schema.sql.': 'Kama kipengele chochote kinaonyesha Haipo/Imeshindwa, washa pdo_mysql kwenye php.ini, anzisha upya Apache, washa MySQL, kisha ingiza sql/schema.sql.',
+    'Sales Information': 'Taarifa za Mauzo',
+    'Week': 'Wiki',
+    'Month': 'Mwezi',
+    'Low Stock Alerts': 'Tahadhari za Stoo Ndogo',
+    'left': 'imebaki',
+    'Recent Sales': 'Mauzo ya Hivi Karibuni',
+    'Error:': 'Hitilafu:',
+    'Name': 'Jina',
+    'Contact': 'Mawasiliano',
+    'Email': 'Barua Pepe',
+    'Position': 'Cheo',
+    'Salary': 'Mshahara',
+    'Date': 'Tarehe',
+    'Reason': 'Sababu',
+    'Quantity': 'Kiasi',
+    'Title': 'Kichwa',
+    'Address': 'Anwani',
+    'City': 'Mji',
+    'From': 'Kutoka',
+    'To': 'Kwenda',
+    'Payment': 'Malipo',
+    'Cash': 'Taslimu',
+    'Mobile Money': 'Pesa Mtandao',
+    'Card': 'Kadi',
+    'Bank Transfer': 'Uhamisho wa Benki',
+    'Excel File (.xlsx or .csv)': 'Faili ya Excel (.xlsx au .csv)',
+    'Upload Excel .xlsx directly, or use CSV.': 'Pakia Excel .xlsx moja kwa moja, au tumia CSV.',
+    'Expected columns:': 'Nguzo zinazotarajiwa:',
+    'Max file size is 5MB and max 5000 data rows.': 'Ukubwa wa juu wa faili ni 5MB na mistari ya juu ni 5000.',
+    'The importer creates new products and updates existing ones by SKU.': 'Kiingizaji huunda bidhaa mpya na kusasisha zilizopo kwa SKU.',
+    'Import': 'Ingiza',
+    'Add New Product': 'Ongeza Bidhaa Mpya',
+    'Add New Customer': 'Ongeza Mteja Mpya',
+    'Add Supplier': 'Ongeza Msambazaji',
+    'Add Employee': 'Ongeza Mfanyakazi',
+    'Record Expense': 'Rekodi Matumizi',
+    'Create Invoice': 'Unda Ankara',
+    'Schedule Delivery': 'Panga Uwasilishaji',
+    'Record Receiving': 'Rekodi Mapokezi',
+    'Create Quotation': 'Unda Nukuu',
+    'Create Purchase Order': 'Unda Oda ya Manunuzi',
+    'Record Return': 'Rekodi Rejesho',
+    'Schedule Appointment': 'Panga Miadi',
+    'Compose Message': 'Andika Ujumbe',
+    'Confirm Delete': 'Thibitisha Kufuta',
+    'Delete': 'Futa',
+    'This action cannot be undone.': 'Kitendo hiki hakiwezi kurudishwa.',
+    'Are you sure you want to delete this product?': 'Una uhakika unataka kufuta bidhaa hii?',
+    'Are you sure you want to delete this customer?': 'Una uhakika unataka kufuta mteja huyu?',
+    'Customer deleted!': 'Mteja amefutwa!',
+    'Invalid transaction number': 'Namba ya muamala si sahihi',
+    'Transaction:': 'Muamala:',
+    'Receipt details would appear here': 'Maelezo ya risiti yataonekana hapa',
+    'Receipt': 'Risiti',
+    'Printing receipt...': 'Inachapisha risiti...',
+    'Printing report...': 'Inachapisha ripoti...',
+    'Invalid report type': 'Aina ya ripoti si sahihi',
+    'At least one location row is required.': 'Angalau mstari mmoja wa tawi unahitajika.',
+    'Location name': 'Jina la tawi',
+    'Could not save the record. Please check your input and try again.': 'Imeshindikana kuhifadhi rekodi. Tafadhali angalia taarifa na ujaribu tena.',
+    'Save failed:': 'Hifadhi imeshindikana:',
+    'Day closed successfully!': 'Siku imefungwa vizuri!',
+    'Print Report': 'Chapisha Ripoti',
+    'No suppliers added yet': 'Hakuna wasambazaji bado',
+    'No employees added yet': 'Hakuna wafanyakazi bado',
+    'No expenses recorded yet': 'Hakuna matumizi bado',
+    'No invoices created yet': 'Hakuna ankara bado',
+    'No deliveries recorded yet': 'Hakuna uwasilishaji bado',
+    'No receiving records yet': 'Hakuna mapokezi bado',
+    'No quotations created yet': 'Hakuna nukuu bado',
+    'No purchase orders created yet': 'Hakuna oda za manunuzi bado',
+    'No returns recorded yet': 'Hakuna marejesho bado',
+    'No appointments scheduled yet': 'Hakuna miadi bado',
+    'Import Products': 'Ingiza Bidhaa',
+    'New Product': 'Bidhaa Mpya',
+    'New Customer': 'Mteja Mpya',
+    'New Expense': 'Matumizi Mapya',
+    'Walk-in Customer': 'Mteja wa Dukani',
+    'Enter product name': 'Weka jina la bidhaa',
+    'e.g., SKU-PRD-001': 'mfano, SKU-PRD-001',
+    'Enter price': 'Weka bei',
+    'Enter quantity': 'Weka kiasi',
+    'Low stock alert level': 'Kiwango cha tahadhari ya stoo ndogo',
+    'Enter customer name': 'Weka jina la mteja',
+    'e.g., 255700000000': 'mfano, 255700000000',
+    'Supplier Name': 'Jina la Msambazaji',
+    'Enter supplier name': 'Weka jina la msambazaji',
+    'Contact Person': 'Mtu wa Mawasiliano',
+    'Enter contact person': 'Weka mtu wa mawasiliano',
+    'Enter phone number': 'Weka namba ya simu',
+    'Enter email address': 'Weka anwani ya barua pepe',
+    'Employee Name': 'Jina la Mfanyakazi',
+    'Enter employee name': 'Weka jina la mfanyakazi',
+    'e.g. Cashier': 'mfano, Karani',
+    'Salary (Tsh)': 'Mshahara (Tsh)',
+    'Enter salary': 'Weka mshahara',
+    'Expense description': 'Maelezo ya matumizi',
+    'Utilities, Transport, etc.': 'Huduma, Usafiri, n.k.',
+    'Customer ID': 'Kitambulisho cha Mteja',
+    'Enter customer ID': 'Weka kitambulisho cha mteja',
+    'Supplier ID': 'Kitambulisho cha Msambazaji',
+    'Enter supplier ID': 'Weka kitambulisho cha msambazaji',
+    'Product ID': 'Kitambulisho cha Bidhaa',
+    'Enter product ID': 'Weka kitambulisho cha bidhaa',
+    'Optional reason': 'Sababu (si lazima)',
+    'Appointment title': 'Kichwa cha miadi',
+    'Location Name': 'Jina la Tawi',
+    'Enter location name': 'Weka jina la tawi',
+    'Enter city': 'Weka mji',
+    'Enter phone': 'Weka simu',
+    'Send Message': 'Tuma Ujumbe',
+    'recipient@example.com': 'mpokeaji@example.com',
+    'Message subject': 'Mada ya ujumbe',
+    'Type your message': 'Andika ujumbe wako',
+    'Transactions': 'Miamala',
+    'Daily Sales': 'Mauzo ya Siku',
+    'Monthly Sales': 'Mauzo ya Mwezi',
+    'Close': 'Funga',
+    'Sale created successfully!': 'Uuzaji umeundwa vizuri!',
+    'Product added successfully!': 'Bidhaa imeongezwa vizuri!',
+    'Customer added successfully!': 'Mteja ameongezwa vizuri!',
+    'Edit functionality requires API integration': 'Kazi ya kuhariri inahitaji kuunganishwa na API',
+    'View functionality requires API integration': 'Kazi ya kutazama inahitaji kuunganishwa na API',
+    'Product deleted successfully!': 'Bidhaa imefutwa vizuri!',
+    'Exporting ': 'Inahamisha ',
+    ' Report PDF...': ' Ripoti PDF...'
+};
+
+const I18N_KEYS_SORTED = Object.keys(I18N_TEXT).sort((a, b) => b.length - a.length);
+
+function getCurrentLanguage() {
+    return localStorage.getItem('pos_language') === 'sw' ? 'sw' : 'en';
+}
+
+function translateValue(value, targetLang) {
+    if (!value || typeof value !== 'string') {
+        return value;
+    }
+
+    if (targetLang !== 'sw') {
+        return value;
+    }
+
+    let translated = value;
+    I18N_KEYS_SORTED.forEach(en => {
+        translated = translated.split(en).join(I18N_TEXT[en]);
+    });
+
+    return translated;
+}
+
+function applyLanguage(targetLang) {
+    document.documentElement.lang = targetLang === 'sw' ? 'sw' : 'en';
+
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+        if (node.parentElement && ['SCRIPT', 'STYLE'].includes(node.parentElement.tagName)) {
+            node = walker.nextNode();
+            continue;
+        }
+
+        const rawText = node.nodeValue || '';
+        if (rawText.trim() !== '') {
+            if (typeof node.__i18nOriginal === 'undefined') {
+                node.__i18nOriginal = rawText;
+            }
+            node.nodeValue = targetLang === 'sw'
+                ? translateValue(node.__i18nOriginal, 'sw')
+                : node.__i18nOriginal;
+        }
+        node = walker.nextNode();
+    }
+
+    document.querySelectorAll('input[placeholder], textarea[placeholder]').forEach(input => {
+        if (!input.dataset.i18nPlaceholder) {
+            input.dataset.i18nPlaceholder = input.getAttribute('placeholder') || '';
+        }
+
+        const source = input.dataset.i18nPlaceholder || '';
+        input.setAttribute('placeholder', targetLang === 'sw' ? translateValue(source, 'sw') : source);
+    });
+
+    document.querySelectorAll('[title]').forEach(el => {
+        if (!el.dataset.i18nTitle) {
+            el.dataset.i18nTitle = el.getAttribute('title') || '';
+        }
+
+        const source = el.dataset.i18nTitle || '';
+        el.setAttribute('title', targetLang === 'sw' ? translateValue(source, 'sw') : source);
+    });
+
+    if (!window.__i18nOriginalTitle) {
+        window.__i18nOriginalTitle = document.title;
+    }
+    document.title = targetLang === 'sw'
+        ? translateValue(window.__i18nOriginalTitle, 'sw')
+        : window.__i18nOriginalTitle;
+
+    updateLanguageButtons(targetLang);
+}
+
+function updateLanguageButtons(lang) {
+    document.querySelectorAll('.lang-btn').forEach(btn => {
+        const value = (btn.getAttribute('data-value') || 'en').toLowerCase();
+        btn.classList.toggle('active', value === lang);
+    });
+}
+
+function setLanguage(lang) {
+    const target = lang === 'sw' ? 'sw' : 'en';
+    localStorage.setItem('pos_language', target);
+    applyLanguage(target);
+}
+
+function initLanguage() {
+    applyLanguage(getCurrentLanguage());
+}
+
 // ============================================
 // INITIALIZATION
 // ============================================
 
 document.addEventListener('DOMContentLoaded', function() {
+    initLanguage();
     initActionBindings();
     initClock();
     initChart();
@@ -269,6 +665,11 @@ function initActionBindings() {
             return;
         }
 
+        if (action === 'setLanguage') {
+            setLanguage(value);
+            return;
+        }
+
         if (action === 'generateReport') {
             generateReport(value);
             return;
@@ -391,6 +792,7 @@ function openModal(title, content, buttons = []) {
     overlay.classList.add('active');
     modal.classList.add('active');
     document.body.style.overflow = 'hidden';
+    applyLanguage(getCurrentLanguage());
 }
 
 function closeModal() {
@@ -977,6 +1379,7 @@ function showToast(type, message) {
     const container = document.getElementById('toastContainer');
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
+    const localizedMessage = getCurrentLanguage() === 'sw' ? translateValue(message, 'sw') : message;
 
     const icons = {
         success: 'fa-check-circle',
@@ -989,7 +1392,7 @@ function showToast(type, message) {
     icon.className = `fa-solid ${icons[type] || 'fa-info-circle'}`;
 
     const span = document.createElement('span');
-    span.textContent = message; // Safe: textContent escapes HTML
+    span.textContent = localizedMessage; // Safe: textContent escapes HTML
 
     toast.appendChild(icon);
     toast.appendChild(span);
@@ -1149,7 +1552,12 @@ function generateReport(type) {
     }
 
     window.open(`export_report_pdf.php?type=${encodeURIComponent(type)}`, '_blank', 'noopener');
-    showToast('success', `Exporting ${names[type]} Report PDF...`);
+    if (getCurrentLanguage() === 'sw') {
+        const localized = translateValue(names[type], 'sw');
+        showToast('success', `Inahamisha PDF ya Ripoti ya ${localized}...`);
+    } else {
+        showToast('success', `Exporting ${names[type]} Report PDF...`);
+    }
 }
 
 function logout() {

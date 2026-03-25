@@ -1068,7 +1068,8 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
             <div class="topbar-actions">
                 <button class="pill primary" data-action="showAddModal"><i class="fa-solid fa-plus"></i> Add</button>
                 <span class="pill" id="clock">--:-- --</span>
-                <span class="pill">EN</span>
+                <button class="pill lang-btn" data-action="setLanguage" data-value="en">EN</button>
+                <button class="pill lang-btn" data-action="setLanguage" data-value="sw">SW</button>
                 <span class="pill"><i class="fa-solid fa-store"></i> Shop</span>
                 <span class="icon-btn notification-btn" data-action="showNotifications">
                     <i class="fa-regular fa-bell"></i>

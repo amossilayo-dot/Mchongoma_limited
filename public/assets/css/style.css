@@ -431,6 +431,12 @@ body {
     margin-right: var(--space-1);
 }
 
+.lang-btn.active {
+    background: #1D4ED8;
+    color: #FFFFFF;
+    border-color: #1D4ED8;
+}
+
 /* ============================================
    STATS GRID
    ============================================ */
