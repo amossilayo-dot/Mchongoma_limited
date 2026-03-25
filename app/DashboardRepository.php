@@ -4,15 +4,20 @@ declare(strict_types=1);
 
 final class DashboardRepository
 {
+    private ?array $productColumnMap = null;
+
     public function __construct(private PDO $pdo)
     {
     }
 
     public function getTotals(): array
     {
+        $columns = $this->resolveProductColumnMap();
+        $quantityColumn = $columns['quantity'];
+
         $totalSales = (float) $this->pdo->query('SELECT COALESCE(SUM(amount), 0) AS total FROM sales')->fetch()['total'];
         $totalCustomers = (int) $this->pdo->query('SELECT COUNT(*) AS total FROM customers')->fetch()['total'];
-        $totalItems = (int) $this->pdo->query('SELECT COALESCE(SUM(stock_qty), 0) AS total FROM products')->fetch()['total'];
+        $totalItems = (int) $this->pdo->query("SELECT COALESCE(SUM($quantityColumn), 0) AS total FROM products")->fetch()['total'];
 
         $stmt = $this->pdo->prepare('SELECT COUNT(*) AS total FROM sales WHERE DATE(created_at) = CURDATE()');
         $stmt->execute();
@@ -61,7 +66,11 @@ final class DashboardRepository
 
     public function getLowStockSummary(): array
     {
-        $stmt = $this->pdo->prepare('SELECT COUNT(*) AS total FROM products WHERE stock_qty <= reorder_level');
+        $columns = $this->resolveProductColumnMap();
+        $quantityColumn = $columns['quantity'];
+        $reorderExpression = $columns['reorder'] !== null ? $columns['reorder'] : '5';
+
+        $stmt = $this->pdo->prepare("SELECT COUNT(*) AS total FROM products WHERE $quantityColumn <= $reorderExpression");
         $stmt->execute();
         $count = (int) $stmt->fetch()['total'];
 
@@ -84,5 +93,24 @@ final class DashboardRepository
         $stmt->execute();
 
         return $stmt->fetchAll();
+    }
+
+    private function resolveProductColumnMap(): array
+    {
+        if ($this->productColumnMap !== null) {
+            return $this->productColumnMap;
+        }
+
+        $columns = [];
+        foreach ($this->pdo->query('SHOW COLUMNS FROM products')->fetchAll() as $column) {
+            $columns[(string) $column['Field']] = true;
+        }
+
+        $this->productColumnMap = [
+            'quantity' => isset($columns['stock_qty']) ? 'stock_qty' : 'stock',
+            'reorder' => isset($columns['reorder_level']) ? 'reorder_level' : null,
+        ];
+
+        return $this->productColumnMap;
     }
 }

@@ -4,17 +4,30 @@ declare(strict_types=1);
 
 final class InventoryRepository
 {
+    private ?array $productColumnMap = null;
+
     public function __construct(private PDO $pdo)
     {
     }
 
     public function getProducts(int $limit = 50, int $offset = 0): array
     {
+        $columns = $this->resolveProductColumnMap();
+        $skuExpression = $columns['sku'] !== null ? $columns['sku'] : "CONCAT('SKU-', id)";
+        $stockExpression = $columns['quantity'];
+        $reorderExpression = $columns['reorder'] !== null ? $columns['reorder'] : '5';
+        $priceExpression = $columns['price'];
+
         $stmt = $this->pdo->prepare(
-            'SELECT id, name, sku, stock_qty, reorder_level, unit_price, created_at
+            "SELECT id, name,
+                    $skuExpression AS sku,
+                    $stockExpression AS stock_qty,
+                    $reorderExpression AS reorder_level,
+                    $priceExpression AS unit_price,
+                    created_at
              FROM products
              ORDER BY name ASC
-             LIMIT :limit OFFSET :offset'
+             LIMIT :limit OFFSET :offset"
         );
         $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
         $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
@@ -128,9 +141,21 @@ final class InventoryRepository
 
     public function getLowStockProducts(): array
     {
+        $columns = $this->resolveProductColumnMap();
+        $skuExpression = $columns['sku'] !== null ? $columns['sku'] : "CONCAT('SKU-', id)";
+        $stockExpression = $columns['quantity'];
+        $reorderExpression = $columns['reorder'] !== null ? $columns['reorder'] : '5';
+        $priceExpression = $columns['price'];
+
         $stmt = $this->pdo->query(
-            'SELECT id, name, sku, stock_qty, reorder_level, unit_price
-             FROM products WHERE stock_qty <= reorder_level ORDER BY stock_qty ASC'
+            "SELECT id, name,
+                    $skuExpression AS sku,
+                    $stockExpression AS stock_qty,
+                    $reorderExpression AS reorder_level,
+                    $priceExpression AS unit_price
+             FROM products
+             WHERE $stockExpression <= $reorderExpression
+             ORDER BY $stockExpression ASC"
         );
         return $stmt->fetchAll();
     }
@@ -183,5 +208,26 @@ final class InventoryRepository
             'updated' => $updated,
             'processed' => count($rows),
         ];
+    }
+
+    private function resolveProductColumnMap(): array
+    {
+        if ($this->productColumnMap !== null) {
+            return $this->productColumnMap;
+        }
+
+        $columns = [];
+        foreach ($this->pdo->query('SHOW COLUMNS FROM products')->fetchAll() as $column) {
+            $columns[(string) $column['Field']] = true;
+        }
+
+        $this->productColumnMap = [
+            'sku' => isset($columns['sku']) ? 'sku' : null,
+            'quantity' => isset($columns['stock_qty']) ? 'stock_qty' : 'stock',
+            'reorder' => isset($columns['reorder_level']) ? 'reorder_level' : null,
+            'price' => isset($columns['unit_price']) ? 'unit_price' : 'price',
+        ];
+
+        return $this->productColumnMap;
     }
 }
