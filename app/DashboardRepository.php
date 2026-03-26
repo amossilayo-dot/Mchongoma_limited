@@ -17,7 +17,8 @@ final class DashboardRepository
 
         $totalSales = (float) $this->pdo->query('SELECT COALESCE(SUM(amount), 0) AS total FROM sales')->fetch()['total'];
         $totalCustomers = (int) $this->pdo->query('SELECT COUNT(*) AS total FROM customers')->fetch()['total'];
-        $totalItems = (int) $this->pdo->query('SELECT COALESCE(SUM(' . $quantityColumn . '), 0) AS total FROM products')->fetch()['total'];
+        $totalProducts = (int) $this->pdo->query('SELECT COUNT(*) AS total FROM products')->fetch()['total'];
+        $totalStockUnits = (int) $this->pdo->query('SELECT COALESCE(SUM(' . $quantityColumn . '), 0) AS total FROM products')->fetch()['total'];
 
         $stmt = $this->pdo->prepare('SELECT COUNT(*) AS total FROM sales WHERE DATE(created_at) = CURDATE()');
         $stmt->execute();
@@ -26,7 +27,9 @@ final class DashboardRepository
         return [
             'totalSales' => $totalSales,
             'totalCustomers' => $totalCustomers,
-            'totalItems' => $totalItems,
+            'totalProducts' => $totalProducts,
+            'totalStockUnits' => $totalStockUnits,
+            'totalItems' => $totalStockUnits,
             'transactionsToday' => $transactionsToday,
         ];
     }

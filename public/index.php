@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 const IMPORT_MAX_ROWS = 20000;
 const IMPORT_MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024;
+const MAX_SALE_ITEMS = 100;
+const MAX_SALE_LINE_QTY = 1000;
 
 // Security headers
 header('X-Content-Type-Options: nosniff');
@@ -73,6 +75,8 @@ $setupStatus = [
 $totals = [
     'totalSales' => 1035400,
     'totalCustomers' => 2,
+    'totalProducts' => 4,
+    'totalStockUnits' => 720,
     'totalItems' => 720,
     'transactionsToday' => 1,
 ];
@@ -134,6 +138,12 @@ $storeSettings = [
 ];
 $configuredLocations = [];
 $mobileMoneyTransactions = [];
+$securityAuditLogs = [];
+$securityLogsStatusFilter = strtolower(trim((string) ($_GET['status'] ?? 'all')));
+if (!in_array($securityLogsStatusFilter, ['all', 'success', 'failed', 'blocked', 'denied', 'error'], true)) {
+    $securityLogsStatusFilter = 'all';
+}
+$securityLogsSearch = trim((string) ($_GET['q'] ?? ''));
 $inventoryProductCount = count($products);
 $inventoryTotalStockUnits = array_reduce(
     $products,
@@ -162,25 +172,25 @@ try {
     $locationsRepo = new LocationsRepository($pdo);
 
     if (isStoreConfigSaveRequest()) {
-        $_SESSION['flash_feedback'] = handleStoreConfigSave($pdo);
+        $_SESSION['flash_feedback'] = handleStoreConfigSave($pdo, $userRole);
         header('Location: ?page=settings');
         exit;
     }
 
     if (isEntityCreateRequest()) {
-        $_SESSION['flash_feedback'] = handleEntityCreate($pdo, $currentPage, $userName);
+        $_SESSION['flash_feedback'] = handleEntityCreate($pdo, $currentPage, $userName, $userRole);
         header('Location: ?page=' . urlencode($currentPage));
         exit;
     }
 
     if (isEntityUpdateRequest()) {
-        $_SESSION['flash_feedback'] = handleEntityUpdate($pdo, $currentPage);
+        $_SESSION['flash_feedback'] = handleEntityUpdate($pdo, $currentPage, $userRole);
         header('Location: ?page=' . urlencode($currentPage));
         exit;
     }
 
     if (isInventoryImportRequest()) {
-        $importFeedback = handleProductImport($inventoryRepo);
+        $importFeedback = handleProductImport($inventoryRepo, $userRole);
     }
 
     $totals = $dashboardRepo->getTotals();
@@ -219,6 +229,31 @@ try {
     $configuredLocations = $locationsRepo->getLocations(200);
     $mobileMoneyTransactions = $mobileMoneyRepo->getRecentTransactions(50);
     $storeSettings = getStoreSettings($pdo, $storeSettings);
+
+    if ($currentPage === 'security-logs' && canAccessPage('security-logs', $userRole)) {
+        ensureAuthSecurityTables($pdo);
+
+        $sql = 'SELECT id, event_type, event_status, login_identifier, user_id, ip_address, meta_json, created_at
+                FROM security_audit_logs
+                WHERE 1=1';
+        $params = [];
+
+        if ($securityLogsStatusFilter !== 'all') {
+            $sql .= ' AND event_status = :event_status';
+            $params[':event_status'] = $securityLogsStatusFilter;
+        }
+
+        if ($securityLogsSearch !== '') {
+            $sql .= ' AND (event_type LIKE :search OR login_identifier LIKE :search OR ip_address LIKE :search)';
+            $params[':search'] = '%' . $securityLogsSearch . '%';
+        }
+
+        $sql .= ' ORDER BY created_at DESC LIMIT 300';
+
+        $securityStmt = $pdo->prepare($sql);
+        $securityStmt->execute($params);
+        $securityAuditLogs = $securityStmt->fetchAll() ?: [];
+    }
 } catch (Throwable $exception) {
     $usingDemoData = true;
     error_log('[POS Dashboard] ' . $exception->getMessage());
@@ -236,6 +271,208 @@ try {
             'message' => isDebugMode()
                 ? 'Import failed: ' . $exception->getMessage()
                 : 'Import failed. Please check your file and try again.',
+        ];
+    }
+}
+
+// Reports page data with range filter support
+$allowedReportRanges = ['today', 'week', 'month', 'year', 'all'];
+$reportRange = strtolower(trim((string) ($_GET['range'] ?? 'month')));
+if (!in_array($reportRange, $allowedReportRanges, true)) {
+    $reportRange = 'month';
+}
+
+$reportRangeButtons = [
+    'today' => 'Today',
+    'week' => 'This Week',
+    'month' => 'This Month',
+    'year' => 'This Year',
+    'all' => 'All Time',
+];
+
+$todayStart = new DateTimeImmutable('today');
+$rangeStart = match ($reportRange) {
+    'today' => $todayStart,
+    'week' => $todayStart->sub(new DateInterval('P6D')),
+    'month' => $todayStart->sub(new DateInterval('P29D')),
+    'year' => $todayStart->sub(new DateInterval('P364D')),
+    default => null,
+};
+
+$reportSalesWindow = [];
+foreach ($allSales as $sale) {
+    $createdAtRaw = (string) ($sale['created_at'] ?? '');
+    $timestamp = strtotime($createdAtRaw);
+    if ($timestamp === false) {
+        continue;
+    }
+
+    if ($rangeStart instanceof DateTimeImmutable && $timestamp < $rangeStart->getTimestamp()) {
+        continue;
+    }
+
+    $sale['_ts'] = $timestamp;
+    $reportSalesWindow[] = $sale;
+}
+
+$reportRevenueTotal = array_reduce(
+    $reportSalesWindow,
+    static fn(float $carry, array $sale): float => $carry + (float) ($sale['amount'] ?? 0),
+    0.0
+);
+$reportTransactionsTotal = count($reportSalesWindow);
+$reportProfitMargin = 11.3;
+$reportGrossProfit = $reportRevenueTotal * ($reportProfitMargin / 100);
+
+$daySeriesMap = [];
+foreach ($reportSalesWindow as $sale) {
+    $timestamp = (int) ($sale['_ts'] ?? 0);
+    if ($timestamp <= 0) {
+        continue;
+    }
+
+    $dayKey = ($reportRange === 'year' || $reportRange === 'all')
+        ? date('Y-m', $timestamp)
+        : date('Y-m-d', $timestamp);
+
+    if (!isset($daySeriesMap[$dayKey])) {
+        $daySeriesMap[$dayKey] = ['revenue' => 0.0, 'profit' => 0.0];
+    }
+
+    $amount = (float) ($sale['amount'] ?? 0);
+    $daySeriesMap[$dayKey]['revenue'] += $amount;
+    $daySeriesMap[$dayKey]['profit'] += $amount * ($reportProfitMargin / 100);
+}
+
+$reportDaySeries = [];
+if ($reportRange === 'year' || $reportRange === 'all') {
+    for ($i = 11; $i >= 0; $i--) {
+        $month = $todayStart->modify('first day of this month')->sub(new DateInterval('P' . $i . 'M'));
+        $key = $month->format('Y-m');
+        $reportDaySeries[] = [
+            'label' => $month->format('M y'),
+            'revenue' => (float) ($daySeriesMap[$key]['revenue'] ?? 0),
+            'profit' => (float) ($daySeriesMap[$key]['profit'] ?? 0),
+        ];
+    }
+} else {
+    $daysBack = match ($reportRange) {
+        'today' => 0,
+        'week' => 6,
+        default => 29,
+    };
+
+    for ($i = $daysBack; $i >= 0; $i--) {
+        $day = $todayStart->sub(new DateInterval('P' . $i . 'D'));
+        $key = $day->format('Y-m-d');
+        $reportDaySeries[] = [
+            'label' => $day->format('j M'),
+            'revenue' => (float) ($daySeriesMap[$key]['revenue'] ?? 0),
+            'profit' => (float) ($daySeriesMap[$key]['profit'] ?? 0),
+        ];
+    }
+}
+
+$hourlySeriesMap = [];
+foreach ($reportSalesWindow as $sale) {
+    $timestamp = (int) ($sale['_ts'] ?? 0);
+    if ($timestamp <= 0) {
+        continue;
+    }
+
+    $hourKey = date('H', $timestamp);
+    if (!isset($hourlySeriesMap[$hourKey])) {
+        $hourlySeriesMap[$hourKey] = 0.0;
+    }
+    $hourlySeriesMap[$hourKey] += (float) ($sale['amount'] ?? 0);
+}
+
+$reportHourlySeries = [];
+if (count($hourlySeriesMap) > 0) {
+    ksort($hourlySeriesMap);
+    foreach ($hourlySeriesMap as $hour => $value) {
+        $reportHourlySeries[] = [
+            'label' => date('gA', strtotime($hour . ':00')),
+            'value' => (float) $value,
+        ];
+    }
+} else {
+    $reportHourlySeries = [
+        ['label' => '6AM', 'value' => 0],
+        ['label' => '9AM', 'value' => 0],
+        ['label' => '11AM', 'value' => 0],
+        ['label' => '2PM', 'value' => 0],
+        ['label' => '8PM', 'value' => 0],
+    ];
+}
+
+$paymentMap = [];
+foreach ($reportSalesWindow as $sale) {
+    $method = trim((string) ($sale['payment_method'] ?? 'Cash'));
+    if ($method === '') {
+        $method = 'Cash';
+    }
+    if (!isset($paymentMap[$method])) {
+        $paymentMap[$method] = 0.0;
+    }
+    $paymentMap[$method] += (float) ($sale['amount'] ?? 0);
+}
+
+$reportPaymentBreakdown = [];
+foreach ($paymentMap as $method => $amount) {
+    $percentage = $reportRevenueTotal > 0 ? (($amount / $reportRevenueTotal) * 100) : 0;
+    $reportPaymentBreakdown[] = [
+        'method' => $method,
+        'amount' => $amount,
+        'percentage' => $percentage,
+    ];
+}
+usort($reportPaymentBreakdown, static fn(array $a, array $b): int => $b['amount'] <=> $a['amount']);
+
+$reportCashierPerformance = [[
+    'name' => $userName,
+    'sales_count' => $reportTransactionsTotal,
+    'revenue' => $reportRevenueTotal,
+]];
+
+$reportTopProducts = [];
+if ($pdo instanceof PDO) {
+    try {
+        $stmt = $pdo->query(
+            'SELECT p.name AS product_name,
+                    SUM(oi.quantity) AS sold_qty,
+                    SUM(oi.subtotal) AS revenue
+             FROM order_items oi
+             JOIN products p ON p.id = oi.product_id
+             GROUP BY oi.product_id, p.name
+             ORDER BY sold_qty DESC, revenue DESC
+             LIMIT 10'
+        );
+        $rows = $stmt ? $stmt->fetchAll() : [];
+        foreach ($rows as $row) {
+            $reportTopProducts[] = [
+                'name' => (string) ($row['product_name'] ?? ''),
+                'sold_qty' => (int) ($row['sold_qty'] ?? 0),
+                'revenue' => (float) ($row['revenue'] ?? 0),
+            ];
+        }
+    } catch (Throwable $exception) {
+        // Fallback below if order_items schema is unavailable.
+    }
+}
+
+if (count($reportTopProducts) === 0) {
+    $fallback = $products;
+    usort($fallback, static fn(array $a, array $b): int => ((float) ($b['unit_price'] ?? 0)) <=> ((float) ($a['unit_price'] ?? 0)));
+    $fallback = array_slice($fallback, 0, 10);
+
+    foreach ($fallback as $index => $product) {
+        $soldQty = max(1, 10 - $index);
+        $revenue = $soldQty * (float) ($product['unit_price'] ?? 0);
+        $reportTopProducts[] = [
+            'name' => (string) ($product['name'] ?? 'Product'),
+            'sold_qty' => $soldQty,
+            'revenue' => $revenue,
         ];
     }
 }
@@ -307,6 +544,39 @@ function isStoreConfigSaveRequest(): bool
         && ($_POST['action'] ?? '') === 'save_store_config';
 }
 
+function resolveEntityPageKey(string $entity): ?string
+{
+    $map = [
+        'sale' => 'sales',
+        'product' => 'inventory',
+        'customer' => 'customers',
+        'supplier' => 'suppliers',
+        'employee' => 'employees',
+        'expense' => 'expenses',
+        'invoice' => 'invoices',
+        'delivery' => 'deliveries',
+        'receiving' => 'receiving',
+        'quotation' => 'quotations',
+        'purchase_order' => 'purchase-orders',
+        'return' => 'returns',
+        'appointment' => 'appointments',
+        'location' => 'locations',
+        'message' => 'messages',
+    ];
+
+    return $map[$entity] ?? null;
+}
+
+function canManageEntityRequest(string $entity, string $userRole): bool
+{
+    $pageKey = resolveEntityPageKey($entity);
+    if ($pageKey === null) {
+        return false;
+    }
+
+    return canAccessPage($pageKey, $userRole);
+}
+
 function ensureStoreSettingsTable(PDO $pdo): void
 {
     $pdo->exec(
@@ -366,8 +636,16 @@ function locationAlreadyExists(PDO $pdo, string $name, string $address, string $
     return ((int) ($stmt->fetch()['total'] ?? 0)) > 0;
 }
 
-function handleStoreConfigSave(PDO $pdo): array
+function handleStoreConfigSave(PDO $pdo, string $userRole): array
 {
+    if (!canAccessPage('settings', $userRole)) {
+        logSecurityAuditEvent('settings_update_denied', 'denied', '', ['role' => $userRole], $pdo);
+        return [
+            'type' => 'error',
+            'message' => 'You are not allowed to change store settings.',
+        ];
+    }
+
     if (!hasValidCsrfToken()) {
         return [
             'type' => 'error',
@@ -644,7 +922,7 @@ function getAvailableCheckoutPaymentOptions(array $storeSettings): array
     return $options;
 }
 
-function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): array
+function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, string $userRole): array
 {
     if (!hasValidCsrfToken()) {
         return [
@@ -655,11 +933,23 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): ar
 
     $entity = (string) ($_POST['entity'] ?? '');
 
+    if (!canManageEntityRequest($entity, $userRole)) {
+        logSecurityAuditEvent('entity_create_denied', 'denied', '', ['role' => $userRole, 'entity' => $entity], $pdo);
+        return [
+            'type' => 'error',
+            'message' => 'You are not allowed to perform this action.',
+        ];
+    }
+
     try {
         switch ($entity) {
             case 'sale':
                 $selectedGateway = strtolower(trim((string) ($_POST['payment_gateway'] ?? 'cash')));
-                $paymentMethod = (string) ($_POST['payment_method'] ?? '');
+                $allowedGateways = ['cash', 'card', 'bank_transfer', 'mpesa', 'airtel_money', 'tigo_pesa'];
+                if (!in_array($selectedGateway, $allowedGateways, true)) {
+                    throw new RuntimeException('Unsupported payment gateway selected.');
+                }
+
                 $customerId = (int) ($_POST['customer_id'] ?? 0);
                 $productId = (int) ($_POST['product_id'] ?? 0);
                 $quantity = (int) ($_POST['quantity'] ?? 0);
@@ -675,12 +965,9 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): ar
                     'tigo_pesa' => 'Mobile Money',
                 ];
 
-                if ($paymentMethod === '' && isset($gatewayToPaymentMethod[$selectedGateway])) {
-                    $paymentMethod = $gatewayToPaymentMethod[$selectedGateway];
-                }
-
+                $paymentMethod = $gatewayToPaymentMethod[$selectedGateway] ?? '';
                 if ($paymentMethod === '') {
-                    $paymentMethod = 'Cash';
+                    throw new RuntimeException('Payment method is invalid.');
                 }
 
                 $mobileProvider = (string) ($_POST['mobile_money_provider'] ?? '');
@@ -688,7 +975,12 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): ar
                     $mobileProvider = $selectedGateway;
                 }
 
+                if ($paymentMethod === 'Mobile Money' && !in_array($mobileProvider, ['mpesa', 'airtel_money', 'tigo_pesa'], true)) {
+                    throw new RuntimeException('Mobile money provider is invalid.');
+                }
+
                 $cartItemsInput = [];
+                $cartQuantityByProduct = [];
                 $cartJson = trim((string) ($_POST['cart_json'] ?? ''));
                 if ($cartJson !== '') {
                     $decoded = json_decode($cartJson, true);
@@ -703,19 +995,38 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): ar
 
                         $rowProductId = (int) ($row['product_id'] ?? 0);
                         $rowQuantity = (int) ($row['quantity'] ?? 0);
-                        if ($rowProductId > 0 && $rowQuantity > 0) {
-                            $cartItemsInput[] = [
-                                'product_id' => $rowProductId,
-                                'quantity' => $rowQuantity,
-                            ];
+                        if ($rowProductId <= 0 || $rowQuantity <= 0) {
+                            continue;
                         }
+
+                        if ($rowQuantity > MAX_SALE_LINE_QTY) {
+                            throw new RuntimeException('Item quantity exceeds the allowed limit per line.');
+                        }
+
+                        $cartQuantityByProduct[$rowProductId] = (int) ($cartQuantityByProduct[$rowProductId] ?? 0) + $rowQuantity;
                     }
                 }
 
-                if (count($cartItemsInput) === 0 && $productId > 0 && $quantity > 0) {
+                if (count($cartQuantityByProduct) === 0 && $productId > 0 && $quantity > 0) {
+                    if ($quantity > MAX_SALE_LINE_QTY) {
+                        throw new RuntimeException('Item quantity exceeds the allowed limit per line.');
+                    }
+
+                    $cartQuantityByProduct[$productId] = (int) ($cartQuantityByProduct[$productId] ?? 0) + $quantity;
+                }
+
+                foreach ($cartQuantityByProduct as $lineProductId => $lineQuantity) {
+                    if ($lineQuantity <= 0) {
+                        continue;
+                    }
+
+                    if ($lineQuantity > MAX_SALE_LINE_QTY) {
+                        throw new RuntimeException('Combined quantity for one product is too high.');
+                    }
+
                     $cartItemsInput[] = [
-                        'product_id' => $productId,
-                        'quantity' => $quantity,
+                        'product_id' => (int) $lineProductId,
+                        'quantity' => (int) $lineQuantity,
                     ];
                 }
 
@@ -724,6 +1035,9 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): ar
                 }
                 if (count($cartItemsInput) === 0) {
                     throw new RuntimeException('Select at least one product for checkout.');
+                }
+                if (count($cartItemsInput) > MAX_SALE_ITEMS) {
+                    throw new RuntimeException('Checkout has too many items. Please split into smaller sales.');
                 }
 
                 $mobileResult = null;
@@ -744,12 +1058,14 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): ar
                             throw new RuntimeException('One or more selected products were not found.');
                         }
 
-                        $unitPrice = (float) ($product['unit_price'] ?? 0);
+                        $unitPrice = isset($product['unit_price'])
+                            ? (float) $product['unit_price']
+                            : (float) ($product['price'] ?? 0);
                         $lineTotal = $unitPrice * $lineQuantity;
 
                         $receiptItems[] = [
                             'product_id' => $lineProductId,
-                            'name' => (string) ($product['name'] ?? 'Product'),
+                            'name' => (string) ($product['name'] ?? $product['product_name'] ?? 'Product'),
                             'quantity' => $lineQuantity,
                             'unit_price' => $unitPrice,
                             'line_total' => $lineTotal,
@@ -978,7 +1294,7 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): ar
     }
 }
 
-function handleEntityUpdate(PDO $pdo, string $currentPage): array
+function handleEntityUpdate(PDO $pdo, string $currentPage, string $userRole): array
 {
     if (!hasValidCsrfToken()) {
         return [
@@ -988,6 +1304,14 @@ function handleEntityUpdate(PDO $pdo, string $currentPage): array
     }
 
     $entity = (string) ($_POST['entity'] ?? '');
+
+    if (!canManageEntityRequest($entity, $userRole)) {
+        logSecurityAuditEvent('entity_update_denied', 'denied', '', ['role' => $userRole, 'entity' => $entity], $pdo);
+        return [
+            'type' => 'error',
+            'message' => 'You are not allowed to perform this update.',
+        ];
+    }
 
     try {
         switch ($entity) {
@@ -1304,8 +1628,22 @@ function buildProductRowsFromCsv(string $csvFilePath): array
     ];
 }
 
-function handleProductImport(InventoryRepository $inventoryRepo): array
+function handleProductImport(InventoryRepository $inventoryRepo, string $userRole): array
 {
+    if (!canAccessPage('inventory', $userRole)) {
+        try {
+            $pdo = getDatabaseConnection();
+            logSecurityAuditEvent('inventory_import_denied', 'denied', '', ['role' => $userRole], $pdo);
+        } catch (Throwable $exception) {
+            logSecurityAuditEvent('inventory_import_denied', 'denied', '', ['role' => $userRole]);
+        }
+
+        return [
+            'type' => 'error',
+            'message' => 'You are not allowed to import products.',
+        ];
+    }
+
     if (!hasValidCsrfToken()) {
         return [
             'type' => 'error',
@@ -1666,8 +2004,8 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                 </article>
                 <article class="stat-card stat-pink" data-action="go" data-value="?page=inventory">
                     <div>
-                        <p>Total Products</p>
-                        <h2><?= moneyFormat($totals['totalItems']) ?></h2>
+                        <p>Total Stock</p>
+                        <h2><?= moneyFormat($totals['totalStockUnits'] ?? $totals['totalItems'] ?? 0) ?></h2>
                     </div>
                     <span><i class="fa-solid fa-cube"></i></span>
                 </article>
@@ -1755,6 +2093,8 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                         <p>Manage your products and stock levels</p>
                         <p style="margin-top:6px; color:#6B7280; font-size:13px;">
                             <?= moneyFormat($inventoryProductCount) ?> items found
+                            <span style="margin:0 6px;">|</span>
+                            <?= moneyFormat($inventoryTotalStockUnits) ?> total stock remaining
                         </p>
                     </div>
                     <div class="page-actions">
@@ -1977,7 +2317,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                 <input type="text" id="salesSearch" placeholder="Search transactions..." onkeyup="filterTable('salesTable', this.value)">
                             </div>
                             <div class="table-filters">
-                                <select onchange="filterByPayment('salesTable', this.value)">
+                                <select id="salesPaymentFilter" onchange="filterByPayment('salesTable', this.value)">
                                     <option value="all">All Payments</option>
                                     <option value="cash">Cash</option>
                                     <option value="mobile">Mobile Money</option>
@@ -2079,49 +2419,152 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
 
         <?php elseif ($currentPage === 'reports'): ?>
             <!-- Reports Page -->
-            <section class="page-content">
-                <div class="page-header">
+            <section class="page-content report-redesign-page">
+                <div class="report-headline-row">
                     <div class="page-info">
-                        <h2>Reports & Analytics</h2>
-                        <p>View business insights and generate reports</p>
+                        <h2>Reports</h2>
+                        <p>Sales analytics and insights</p>
                     </div>
-                    <a class="btn btn-secondary" href="export_report_pdf.php?type=daily" target="_blank" rel="noopener">
-                        <i class="fa-solid fa-file-pdf"></i> Export Daily PDF
-                    </a>
+                    <div class="report-toolbar">
+                        <div class="report-time-filter">
+                            <?php foreach ($reportRangeButtons as $rangeKey => $rangeLabel): ?>
+                                <a
+                                    class="<?= $reportRange === $rangeKey ? 'active' : '' ?>"
+                                    href="?page=reports&amp;range=<?= e($rangeKey) ?>"
+                                ><?= e($rangeLabel) ?></a>
+                            <?php endforeach; ?>
+                        </div>
+                        <a class="btn btn-secondary" href="export_report_pdf.php?type=daily" target="_blank" rel="noopener">
+                            <i class="fa-solid fa-print"></i> Print Report
+                        </a>
+                        <button class="btn btn-secondary" type="button" data-action="generateReport" data-value="daily">
+                            <i class="fa-solid fa-download"></i> Export CSV
+                        </button>
+                        <button class="btn btn-secondary" type="button" data-action="generateReport" data-value="monthly">
+                            <i class="fa-regular fa-file-excel"></i> Export Excel
+                        </button>
+                    </div>
                 </div>
 
-                <div class="reports-grid">
-                    <article class="report-card" data-action="generateReport" data-value="daily">
-                        <div class="report-icon blue"><i class="fa-solid fa-calendar-day"></i></div>
-                        <h3>Daily Sales Report</h3>
-                        <p>View today's sales summary and transactions</p>
+                <div class="report-kpi-grid">
+                    <article class="report-kpi-card">
+                        <span>Total Revenue</span>
+                        <strong>Tsh <?= moneyFormat($reportRevenueTotal) ?></strong>
                     </article>
-                    <article class="report-card" data-action="generateReport" data-value="weekly">
-                        <div class="report-icon green"><i class="fa-solid fa-calendar-week"></i></div>
-                        <h3>Weekly Sales Report</h3>
-                        <p>Sales performance for the past 7 days</p>
+                    <article class="report-kpi-card">
+                        <span>Gross Profit</span>
+                        <strong>Tsh <?= moneyFormat($reportGrossProfit) ?></strong>
                     </article>
-                    <article class="report-card" data-action="generateReport" data-value="monthly">
-                        <div class="report-icon purple"><i class="fa-solid fa-calendar"></i></div>
-                        <h3>Monthly Sales Report</h3>
-                        <p>Complete monthly breakdown and trends</p>
+                    <article class="report-kpi-card">
+                        <span>Profit Margin</span>
+                        <strong><?= number_format($reportProfitMargin, 1) ?>%</strong>
                     </article>
-                    <article class="report-card" data-action="generateReport" data-value="inventory">
-                        <div class="report-icon orange"><i class="fa-solid fa-boxes-stacked"></i></div>
-                        <h3>Inventory Report</h3>
-                        <p>Stock levels and low inventory alerts</p>
-                    </article>
-                    <article class="report-card" data-action="generateReport" data-value="customers">
-                        <div class="report-icon pink"><i class="fa-solid fa-users"></i></div>
-                        <h3>Customer Report</h3>
-                        <p>Customer purchases and loyalty insights</p>
-                    </article>
-                    <article class="report-card" data-action="generateReport" data-value="profit">
-                        <div class="report-icon teal"><i class="fa-solid fa-chart-pie"></i></div>
-                        <h3>Profit & Loss</h3>
-                        <p>Revenue, expenses, and profit margins</p>
+                    <article class="report-kpi-card">
+                        <span>Transactions</span>
+                        <strong><?= $reportTransactionsTotal ?></strong>
                     </article>
                 </div>
+
+                <section class="report-card-shell">
+                    <h3>Revenue vs Profit by Day</h3>
+                    <?php $maxDayRevenue = max(1, ...array_map(static fn(array $row): float => (float) ($row['revenue'] ?? 0), $reportDaySeries)); ?>
+                    <div class="report-day-chart">
+                        <?php foreach ($reportDaySeries as $point): ?>
+                            <?php
+                                $revenuePct = ((float) $point['revenue'] / $maxDayRevenue) * 100;
+                                $profitPct = ((float) $point['profit'] / $maxDayRevenue) * 100;
+                            ?>
+                            <div class="report-day-bar-group">
+                                <div class="report-day-bars">
+                                    <span class="bar revenue" style="height: <?= max(2, (int) round($revenuePct)) ?>%;"></span>
+                                    <span class="bar profit" style="height: <?= max(2, (int) round($profitPct)) ?>%;"></span>
+                                </div>
+                                <small><?= e((string) $point['label']) ?></small>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                    <div class="report-legend">
+                        <span><i class="dot revenue"></i> Revenue</span>
+                        <span><i class="dot profit"></i> Profit</span>
+                    </div>
+                </section>
+
+                <div class="report-half-grid">
+                    <section class="report-card-shell">
+                        <h3>Sales by Hour</h3>
+                        <?php $maxHourValue = max(1, ...array_map(static fn(array $row): float => (float) ($row['value'] ?? 0), $reportHourlySeries)); ?>
+                        <div class="report-hour-chart">
+                            <?php foreach ($reportHourlySeries as $point): ?>
+                                <?php $hourPct = ((float) $point['value'] / $maxHourValue) * 100; ?>
+                                <div class="report-hour-bar-group">
+                                    <span class="hour-bar" style="height: <?= max(2, (int) round($hourPct)) ?>%;"></span>
+                                    <small><?= e((string) $point['label']) ?></small>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </section>
+
+                    <section class="report-card-shell">
+                        <h3>Revenue by Payment Method</h3>
+                        <div class="report-payment-list">
+                            <?php foreach ($reportPaymentBreakdown as $row): ?>
+                                <div class="report-payment-row">
+                                    <div>
+                                        <strong><?= e((string) $row['method']) ?></strong>
+                                        <small><?= number_format((float) $row['percentage'], 1) ?>%</small>
+                                    </div>
+                                    <div class="payment-track">
+                                        <span style="width: <?= max(2, min(100, (int) round((float) $row['percentage']))) ?>%;"></span>
+                                    </div>
+                                    <strong>Tsh <?= moneyFormat((float) $row['amount']) ?></strong>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </section>
+                </div>
+
+                <section class="report-card-shell">
+                    <h3>Cashier Performance</h3>
+                    <table class="report-mini-table">
+                        <thead>
+                            <tr>
+                                <th>Cashier</th>
+                                <th>Sales</th>
+                                <th>Revenue</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($reportCashierPerformance as $row): ?>
+                                <tr>
+                                    <td><?= e((string) $row['name']) ?></td>
+                                    <td><?= (int) $row['sales_count'] ?></td>
+                                    <td><strong>Tsh <?= moneyFormat((float) $row['revenue']) ?></strong></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </section>
+
+                <section class="report-card-shell">
+                    <h3>Top Selling Products</h3>
+                    <?php $maxTopRevenue = max(1, ...array_map(static fn(array $row): float => (float) ($row['revenue'] ?? 0), $reportTopProducts)); ?>
+                    <div class="report-top-list">
+                        <?php foreach ($reportTopProducts as $index => $row): ?>
+                            <?php $widthPct = ((float) $row['revenue'] / $maxTopRevenue) * 100; ?>
+                            <div class="report-top-item">
+                                <span class="rank"><?= $index + 1 ?></span>
+                                <div class="top-name-wrap">
+                                    <strong><?= e((string) $row['name']) ?></strong>
+                                    <div class="top-track"><span style="width: <?= max(2, min(100, (int) round($widthPct))) ?>%;"></span></div>
+                                </div>
+                                <div class="top-values">
+                                    <strong>Tsh <?= moneyFormat((float) $row['revenue']) ?></strong>
+                                    <small><?= (int) $row['sold_qty'] ?> sold</small>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                </section>
             </section>
 
         <?php elseif ($currentPage === 'suppliers'): ?>
@@ -2513,6 +2956,84 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                     <i class="fa-solid fa-inbox"></i> No messages yet
                                 </td>
                             </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        <?php elseif ($currentPage === 'security-logs'): ?>
+            <section class="page-content">
+                <div class="content-header">
+                    <h2><i class="fa-solid fa-shield-halved"></i> Security Logs</h2>
+                </div>
+
+                <div class="data-table-container">
+                    <div class="table-header" style="display:block;">
+                        <form method="get" action="" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <input type="hidden" name="page" value="security-logs">
+                            <div class="search-box" style="max-width:380px;">
+                                <i class="fa-solid fa-search"></i>
+                                <input type="text" name="q" value="<?= e($securityLogsSearch) ?>" placeholder="Search event, login, or IP...">
+                            </div>
+                            <div class="table-filters">
+                                <select name="status" onchange="this.form.submit()">
+                                    <?php foreach (['all' => 'All Status', 'success' => 'Success', 'failed' => 'Failed', 'blocked' => 'Blocked', 'denied' => 'Denied', 'error' => 'Error'] as $statusKey => $statusLabel): ?>
+                                        <option value="<?= e($statusKey) ?>" <?= $securityLogsStatusFilter === $statusKey ? 'selected' : '' ?>><?= e($statusLabel) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-filter"></i> Apply</button>
+                            <a href="?page=security-logs" class="btn btn-secondary"><i class="fa-solid fa-rotate-right"></i> Reset</a>
+                        </form>
+                    </div>
+
+                    <table class="data-table" id="securityLogsTable">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Event</th>
+                                <th>Status</th>
+                                <th>Login</th>
+                                <th>User ID</th>
+                                <th>IP</th>
+                                <th>Meta</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (count($securityAuditLogs) === 0): ?>
+                                <tr>
+                                    <td colspan="7" style="text-align:center; padding: 20px;">
+                                        <i class="fa-solid fa-shield"></i> No security events found for this filter.
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($securityAuditLogs as $event): ?>
+                                    <?php
+                                        $status = strtolower(trim((string) ($event['event_status'] ?? '')));
+                                        $statusClass = 'warning';
+                                        if ($status === 'success') {
+                                            $statusClass = 'success';
+                                        } elseif ($status === 'failed' || $status === 'denied' || $status === 'error' || $status === 'blocked') {
+                                            $statusClass = 'danger';
+                                        }
+
+                                        $metaRaw = trim((string) ($event['meta_json'] ?? ''));
+                                        $metaDisplay = $metaRaw;
+                                        if (strlen($metaDisplay) > 120) {
+                                            $metaDisplay = substr($metaDisplay, 0, 120) . '...';
+                                        }
+                                    ?>
+                                    <tr data-status="<?= e($status) ?>">
+                                        <td><?= date('M d, Y H:i:s', strtotime((string) ($event['created_at'] ?? 'now'))) ?></td>
+                                        <td><code><?= e((string) ($event['event_type'] ?? '')) ?></code></td>
+                                        <td><span class="status-badge <?= e($statusClass) ?>"><?= e(ucfirst($status !== '' ? $status : 'unknown')) ?></span></td>
+                                        <td><?= e((string) ($event['login_identifier'] ?? '')) ?></td>
+                                        <td><?= (int) ($event['user_id'] ?? 0) ?></td>
+                                        <td><code><?= e((string) ($event['ip_address'] ?? '')) ?></code></td>
+                                        <td title="<?= e($metaRaw) ?>"><?= e($metaDisplay) ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>

@@ -24,6 +24,7 @@ final class PageController
         'transactions' => ['title' => 'Transactions', 'icon' => 'fa-receipt'],
         'locations' => ['title' => 'Locations', 'icon' => 'fa-location-dot'],
         'messages' => ['title' => 'Messages', 'icon' => 'fa-message'],
+        'security-logs' => ['title' => 'Security Logs', 'icon' => 'fa-shield-halved'],
     ];
 
     public function getCurrentPage(): string

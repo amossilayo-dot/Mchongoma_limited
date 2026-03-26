@@ -1670,7 +1670,44 @@ const TABLE_FILTER_STATE = {
         search: '',
         stock: 'all',
     },
+    salesTable: {
+        search: '',
+        payment: 'all',
+    },
 };
+
+function normalizePaymentGroup(value) {
+    const normalized = (value || '').toString().trim().toLowerCase().replace(/[\s-]+/g, '_');
+
+    if (normalized === '' || normalized === 'all' || normalized === 'all_payments') {
+        return 'all';
+    }
+
+    if (normalized.includes('cash')) {
+        return 'cash';
+    }
+
+    if (normalized.includes('card')) {
+        return 'card';
+    }
+
+    if (normalized.includes('bank')) {
+        return 'bank_transfer';
+    }
+
+    if (
+        normalized.includes('mobile')
+        || normalized.includes('mpesa')
+        || normalized.includes('airtel')
+        || normalized.includes('tigo')
+        || normalized.includes('halopesa')
+        || normalized.includes('mixx')
+    ) {
+        return 'mobile';
+    }
+
+    return normalized;
+}
 
 function applyProductTableFilters() {
     const table = document.getElementById('productTable');
@@ -1688,6 +1725,26 @@ function applyProductTableFilters() {
         const matchesStock = stockFilter === 'all' || stockStatus === stockFilter;
 
         row.style.display = matchesSearch && matchesStock ? '' : 'none';
+    });
+}
+
+function applySalesTableFilters() {
+    const table = document.getElementById('salesTable');
+    if (!table) return;
+
+    const rows = table.querySelectorAll('tbody tr');
+    const state = TABLE_FILTER_STATE.salesTable;
+    const searchTerm = (state.search || '').toLowerCase();
+    const paymentFilter = normalizePaymentGroup(state.payment || 'all');
+
+    rows.forEach((row) => {
+        const text = (row.textContent || '').toLowerCase();
+        const rowPayment = normalizePaymentGroup(row.dataset.payment || '');
+
+        const matchesSearch = searchTerm === '' || text.includes(searchTerm);
+        const matchesPayment = paymentFilter === 'all' || rowPayment === paymentFilter;
+
+        row.style.display = matchesSearch && matchesPayment ? '' : 'none';
     });
 }
 
@@ -1761,10 +1818,24 @@ function initSalesPage() {
         }
 
         const txNo = escapeHtml(receipt.transaction_no || 'N/A');
+        const displayReceiptNo = /^TXN-/i.test(receipt.transaction_no || '')
+            ? escapeHtml(('RCP-' + String(receipt.transaction_no || '').replace(/^TXN-/i, '')).replace(/\s+/g, ''))
+            : txNo;
         const customer = escapeHtml(receipt.customer_name || 'Walk-in Customer');
         const cashier = escapeHtml(receipt.cashier_name || 'Cashier');
         const paymentMethod = escapeHtml(receipt.payment_method || 'Cash');
-        const createdAt = escapeHtml(receipt.created_at || '');
+        const createdAtRaw = String(receipt.created_at || '');
+        const createdAtDate = createdAtRaw ? new Date(createdAtRaw.replace(' ', 'T')) : null;
+        const createdAt = (createdAtDate && !Number.isNaN(createdAtDate.getTime()))
+            ? escapeHtml(createdAtDate.toLocaleString('en-GB', {
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+            }).replace(',', ' ,'))
+            : escapeHtml(createdAtRaw);
         const subtotal = formatMoney(Number(receipt.subtotal || 0));
         const tax = formatMoney(Number(receipt.tax || 0));
         const total = formatMoney(Number(receipt.total || 0));
@@ -1783,7 +1854,7 @@ function initSalesPage() {
                 <div class="sales-receipt-subtitle">Thank you for your purchase!</div>
                 <div class="sales-receipt-time">${createdAt}</div>
                 <div class="sales-receipt-meta">
-                    <div><span>Receipt #</span><strong>${txNo}</strong></div>
+                    <div><span>Receipt #</span><strong>${displayReceiptNo}</strong></div>
                     <div><span>Customer</span><strong>${customer}</strong></div>
                     <div><span>Cashier</span><strong>${cashier}</strong></div>
                 </div>
@@ -1804,25 +1875,32 @@ function initSalesPage() {
                 return;
             }
 
-            const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=420,height=700');
+            const printWindow = window.open('', '_blank', 'width=420,height=700');
             if (!printWindow) {
                 showToast('warning', 'Pop-up blocked. Enable pop-ups to print receipt.');
                 return;
             }
 
+            try {
+                printWindow.opener = null;
+            } catch (error) {
+                // Ignore if browser disallows mutating opener.
+            }
+
             printWindow.document.write(`
                 <html>
                     <head>
-                        <title>Receipt ${txNo}</title>
+                        <title>Receipt ${displayReceiptNo}</title>
                         <style>
                             body{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; padding:16px; color:#111;}
                             .sales-receipt-sheet{max-width:360px; margin:0 auto;}
-                            .sales-receipt-brand{text-align:center; font-size:28px; font-weight:700; margin-bottom:4px;}
+                            .sales-receipt-brand{text-align:center; font-size:32px; font-weight:800; margin-bottom:4px;}
                             .sales-receipt-subtitle,.sales-receipt-time{text-align:center; color:#555; font-size:12px;}
-                            .sales-receipt-meta,.sales-receipt-totals{margin-top:14px; border-top:1px dashed #bbb; padding-top:10px;}
+                            .sales-receipt-meta{margin-top:14px; border-top:1px dashed #bbb; border-bottom:1px dashed #bbb; padding:10px 0;}
+                            .sales-receipt-totals{margin-top:14px; border-top:1px dashed #bbb; padding-top:10px;}
                             .sales-receipt-meta div,.sales-receipt-line,.sales-receipt-totals div{display:flex; justify-content:space-between; margin-bottom:8px; font-size:13px;}
                             .sales-receipt-items{margin-top:10px;}
-                            .sales-receipt-total{font-weight:700; font-size:16px;}
+                            .sales-receipt-total{font-weight:800; font-size:18px;}
                             .sales-receipt-thanks{text-align:center; margin-top:14px; font-size:12px;}
                         </style>
                     </head>
@@ -2132,6 +2210,12 @@ function filterTable(tableId, searchTerm) {
         return;
     }
 
+    if (tableId === 'salesTable') {
+        TABLE_FILTER_STATE.salesTable.search = (searchTerm || '').toString();
+        applySalesTableFilters();
+        return;
+    }
+
     const table = document.getElementById(tableId);
     if (!table) return;
 
@@ -2154,26 +2238,12 @@ window.filterByStock = filterByStock;
 window.filterByPayment = filterByPayment;
 
 function filterByPayment(tableId, value) {
-    const table = document.getElementById(tableId);
-    if (!table) return;
+    if (tableId !== 'salesTable') {
+        return;
+    }
 
-    const rows = table.querySelectorAll('tbody tr');
-    const selected = (value || 'all').toLowerCase();
-
-    rows.forEach(row => {
-        const payment = (row.dataset.payment || '').toLowerCase();
-        if (selected === 'all') {
-            row.style.display = '';
-            return;
-        }
-
-        if (selected === 'mobile') {
-            row.style.display = payment.includes('mobile') ? '' : 'none';
-            return;
-        }
-
-        row.style.display = payment.includes(selected) ? '' : 'none';
-    });
+    TABLE_FILTER_STATE.salesTable.payment = normalizePaymentGroup(value || 'all');
+    applySalesTableFilters();
 }
 
 // ============================================

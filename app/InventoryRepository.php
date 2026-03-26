@@ -89,7 +89,24 @@ final class InventoryRepository
 
     public function getProduct(int $id): ?array
     {
-        $stmt = $this->pdo->prepare('SELECT * FROM products WHERE id = :id');
+        $columns = $this->resolveProductColumnMap();
+        $skuExpression = $columns['sku'] !== null ? $columns['sku'] : "CONCAT('SKU-', id)";
+        $stockExpression = $columns['quantity'];
+        $reorderExpression = $columns['reorder'] !== null ? $columns['reorder'] : '5';
+        $priceExpression = $columns['price'];
+        $categoryExpression = $columns['category'] !== null ? $columns['category'] : 'NULL';
+
+        $stmt = $this->pdo->prepare(
+            "SELECT id, name,
+                    $skuExpression AS sku,
+                    $categoryExpression AS category,
+                    $stockExpression AS stock_qty,
+                    $reorderExpression AS reorder_level,
+                    $priceExpression AS unit_price,
+                    created_at
+             FROM products
+             WHERE id = :id"
+        );
         $stmt->bindValue(':id', $id, PDO::PARAM_INT);
         $stmt->execute();
         $result = $stmt->fetch();
