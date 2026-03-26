@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+const IMPORT_MAX_ROWS = 20000;
+const IMPORT_MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024;
+
 // Security headers
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: SAMEORIGIN');
@@ -95,6 +98,16 @@ $customers = [
     ['id' => 1, 'name' => 'Walk-in Customer', 'phone' => null, 'total_orders' => 4, 'total_spent' => 1139300, 'created_at' => '2026-03-18'],
     ['id' => 2, 'name' => 'Mchina', 'phone' => '255700000111', 'total_orders' => 2, 'total_spent' => 56500, 'created_at' => '2026-03-18'],
 ];
+$saleProductOptions = [
+    ['id' => 1, 'name' => 'Sugar 1kg', 'unit_price' => 3800],
+    ['id' => 2, 'name' => 'Rice 1kg', 'unit_price' => 3500],
+    ['id' => 3, 'name' => 'Soap Bar', 'unit_price' => 1200],
+    ['id' => 4, 'name' => 'Milk 500ml', 'unit_price' => 1800],
+];
+$saleCustomerOptions = [
+    ['id' => 1, 'name' => 'Walk-in Customer'],
+    ['id' => 2, 'name' => 'Mchina'],
+];
 $allSales = $recentSales;
 $storeSettings = [
     'store_name' => 'Mchongoma Limited',
@@ -165,8 +178,22 @@ try {
         'message' => count($lowStockItems) > 0 ? count($lowStockItems) . ' products need restocking.' : 'All products are well stocked.',
     ];
     $recentSales = $dashboardRepo->getRecentSales(5);
-    $products = $inventoryRepo->getProducts(50);
+    $inventoryProductLimit = $currentPage === 'inventory'
+        ? max(200, $inventoryRepo->getTotalCount())
+        : 200;
+    $products = $inventoryRepo->getProducts($inventoryProductLimit);
     $customers = $customerRepo->getCustomers(50);
+    $saleProductOptions = array_map(static fn(array $item) => [
+        'id' => (int) ($item['id'] ?? 0),
+        'name' => (string) ($item['name'] ?? ''),
+        'category' => (string) ($item['category'] ?? ''),
+        'stock_qty' => (int) ($item['stock_qty'] ?? 0),
+        'unit_price' => (float) ($item['unit_price'] ?? 0),
+    ], $inventoryRepo->getProducts(500));
+    $saleCustomerOptions = array_map(static fn(array $item) => [
+        'id' => (int) ($item['id'] ?? 0),
+        'name' => (string) ($item['name'] ?? ''),
+    ], $customerRepo->getCustomers(500));
     $allSales = $salesRepo->getSales(50);
     $configuredLocations = $locationsRepo->getLocations(200);
     $mobileMoneyTransactions = $mobileMoneyRepo->getRecentTransactions(50);
@@ -556,12 +583,35 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): ar
             case 'sale':
                 $paymentMethod = (string) ($_POST['payment_method'] ?? 'Cash');
                 $customerId = (int) ($_POST['customer_id'] ?? 0);
+                $productId = (int) ($_POST['product_id'] ?? 0);
+                $quantity = (int) ($_POST['quantity'] ?? 0);
                 $amount = (float) ($_POST['amount'] ?? 0);
+
+                if ($customerId <= 0) {
+                    throw new RuntimeException('Customer is required for a sale.');
+                }
+                if ($productId <= 0) {
+                    throw new RuntimeException('Product is required for a sale.');
+                }
+                if ($quantity <= 0) {
+                    throw new RuntimeException('Quantity must be greater than zero.');
+                }
 
                 $mobileResult = null;
 
                 $pdo->beginTransaction();
                 try {
+                    $inventoryRepo = new InventoryRepository($pdo);
+                    $product = $inventoryRepo->getProduct($productId);
+                    if (!is_array($product)) {
+                        throw new RuntimeException('Selected product was not found.');
+                    }
+
+                    $derivedAmount = (float) ($product['unit_price'] ?? 0) * $quantity;
+                    if ($derivedAmount > 0) {
+                        $amount = $derivedAmount;
+                    }
+
                     if ($paymentMethod === 'Mobile Money') {
                         $gateway = new MobileMoneyGateway($pdo);
                         $mobileResult = $gateway->initiate([
@@ -576,6 +626,8 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): ar
                             throw new RuntimeException((string) ($mobileResult['message'] ?? 'Mobile money payment failed.'));
                         }
                     }
+
+                    $inventoryRepo->deductStock($productId, $quantity);
 
                     $saleId = (new SalesRepository($pdo))->createSale([
                         'customer_id' => $customerId,
@@ -599,7 +651,7 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): ar
                     throw $exception;
                 }
 
-                $message = 'Sale created successfully.';
+                $message = 'Sale created successfully. Stock deducted for quantity ' . $quantity . '.';
                 if (is_array($mobileResult)) {
                     $message .= ' ' . (string) ($mobileResult['message'] ?? '');
                     if (!empty($mobileResult['external_reference'])) {
@@ -883,7 +935,7 @@ function buildProductRowsFromCsv(string $csvFilePath): array
     $errors = [];
     $skipped = 0;
     $lineNumber = 1;
-    $maxRows = 5000;
+    $maxRows = IMPORT_MAX_ROWS;
     $processedRows = 0;
     $seenSkus = [];
 
@@ -952,7 +1004,7 @@ function buildProductRowsFromCsv(string $csvFilePath): array
 
         if ($processedRows >= $maxRows) {
             fclose($handle);
-            throw new RuntimeException('CSV exceeds the maximum of 5000 data rows. Please split the file and try again.');
+            throw new RuntimeException('CSV exceeds the maximum of ' . IMPORT_MAX_ROWS . ' data rows. Please split the file and try again.');
         }
 
         $name = trim((string) ($row[$headerMap['name']] ?? ''));
@@ -1048,12 +1100,11 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
         ];
     }
 
-    $maxFileSizeBytes = 5 * 1024 * 1024;
     $fileSize = (int) ($file['size'] ?? 0);
-    if ($fileSize <= 0 || $fileSize > $maxFileSizeBytes) {
+    if ($fileSize <= 0 || $fileSize > IMPORT_MAX_FILE_SIZE_BYTES) {
         return [
             'type' => 'error',
-            'message' => 'File size must be greater than 0 and not exceed 5MB.',
+            'message' => 'File size must be greater than 0 and not exceed 25MB.',
         ];
     }
 
@@ -1103,10 +1154,16 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
         }
 
         $result = $inventoryRepo->importProductsFromRows($parsed['rows']);
+        $invalidRows = count($parsed['errors']);
+        $importedRows = (int) ($result['processed'] ?? 0);
+        $totalDataRows = $importedRows + $invalidRows;
         $message = sprintf(
-            'Import complete: %d created, %d updated, %d empty rows skipped.',
+            'Import complete: %d total data rows, %d imported (%d created, %d updated), %d invalid, %d empty rows skipped.',
+            $totalDataRows,
+            $importedRows,
             $result['created'],
             $result['updated'],
+            $invalidRows,
             $parsed['skipped']
         );
 
@@ -1143,7 +1200,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
 
 function buildProductRowsFromXlsx(string $xlsxFilePath): array
 {
-    $tableRows = readXlsxRows($xlsxFilePath, 5000);
+    $tableRows = readXlsxRows($xlsxFilePath, IMPORT_MAX_ROWS);
     if (!$tableRows || count($tableRows) < 1) {
         throw new RuntimeException('XLSX is empty or missing required columns. Expected: name, sku, unit_price.');
     }
@@ -2399,6 +2456,8 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
     'salesChartData' => ['week' => $weeklySales, 'month' => $monthlySales],
     'currentPage' => $currentPage,
     'csrfToken' => getCsrfToken(),
+    'saleCustomers' => $saleCustomerOptions,
+    'saleProducts' => $saleProductOptions,
 ], JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
 <script src="assets/js/dashboard.js"></script>
 </body>

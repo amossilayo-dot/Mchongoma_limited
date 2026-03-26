@@ -37,6 +37,51 @@ final class InventoryRepository
         return $stmt->fetchAll();
     }
 
+    public function searchProducts(string $query, int $limit = 200): array
+    {
+        $query = trim($query);
+        if ($query === '') {
+            return $this->getProducts($limit, 0);
+        }
+
+        $columns = $this->resolveProductColumnMap();
+        $skuExpression = $columns['sku'] !== null ? $columns['sku'] : "CONCAT('SKU-', id)";
+        $stockExpression = $columns['quantity'];
+        $reorderExpression = $columns['reorder'] !== null ? $columns['reorder'] : '5';
+        $priceExpression = $columns['price'];
+        $categoryExpression = $columns['category'] !== null ? $columns['category'] : 'NULL';
+
+        $limit = max(1, min($limit, 1000));
+
+        $whereParts = ['name LIKE :query'];
+        if ($columns['category'] !== null) {
+            $whereParts[] = $columns['category'] . ' LIKE :query';
+        }
+        if ($columns['sku'] !== null) {
+            $whereParts[] = $columns['sku'] . ' LIKE :query';
+        }
+
+        $stmt = $this->pdo->prepare(
+            "SELECT id, name,
+                    $skuExpression AS sku,
+                    $categoryExpression AS category,
+                    $stockExpression AS stock_qty,
+                    $reorderExpression AS reorder_level,
+                    $priceExpression AS unit_price,
+                    created_at
+             FROM products
+             WHERE " . implode(' OR ', $whereParts) . "
+             ORDER BY name ASC
+             LIMIT :limit"
+        );
+
+        $stmt->bindValue(':query', '%' . $query . '%', PDO::PARAM_STR);
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+
+        return $stmt->fetchAll();
+    }
+
     public function getTotalCount(): int
     {
         return (int) $this->pdo->query('SELECT COUNT(*) AS total FROM products')->fetch()['total'];
@@ -117,7 +162,7 @@ final class InventoryRepository
         $params[':price'] = (float) $unitPrice;
 
         $stmt = $this->pdo->prepare(
-            'INSERT INTO products (' . implode(', ', $columnNames) . ')\n'
+            'INSERT INTO products (' . implode(', ', $columnNames) . ') '
             . 'VALUES (' . implode(', ', $placeholders) . ')'
         );
         $stmt->execute($params);
@@ -196,6 +241,33 @@ final class InventoryRepository
     {
         $stmt = $this->pdo->prepare('DELETE FROM products WHERE id = :id');
         return $stmt->execute([':id' => $id]);
+    }
+
+    public function deductStock(int $productId, int $quantity): void
+    {
+        if ($productId <= 0) {
+            throw new InvalidArgumentException('Valid product ID is required.');
+        }
+        if ($quantity <= 0) {
+            throw new InvalidArgumentException('Quantity must be greater than zero.');
+        }
+
+        $columns = $this->resolveProductColumnMap();
+        $stockColumn = $columns['quantity'];
+
+        $stmt = $this->pdo->prepare(
+            'UPDATE products
+             SET ' . $stockColumn . ' = ' . $stockColumn . ' - :quantity
+             WHERE id = :id AND ' . $stockColumn . ' >= :quantity'
+        );
+        $stmt->execute([
+            ':id' => $productId,
+            ':quantity' => $quantity,
+        ]);
+
+        if ($stmt->rowCount() < 1) {
+            throw new RuntimeException('Insufficient stock for this sale quantity.');
+        }
     }
 
     public function getLowStockProducts(): array

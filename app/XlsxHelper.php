@@ -6,7 +6,7 @@ declare(strict_types=1);
  * Read rows from first sheet of an XLSX file.
  * Returns a list of row arrays with cell values as strings.
  */
-function readXlsxRows(string $xlsxPath, int $maxRows = 5000): array
+function readXlsxRows(string $xlsxPath, int $maxRows = 20000): array
 {
     if (!is_file($xlsxPath)) {
         throw new RuntimeException('XLSX file not found.');
@@ -48,7 +48,7 @@ function readXlsxRows(string $xlsxPath, int $maxRows = 5000): array
 
         foreach ($rowNodes as $rowNode) {
             if (count($rows) >= $maxRows + 1) {
-                throw new RuntimeException('XLSX exceeds the maximum of 5000 data rows. Please split the file and try again.');
+                throw new RuntimeException('XLSX exceeds the maximum of ' . $maxRows . ' data rows. Please split the file and try again.');
             }
 
             $cellNodes = $rowNode->children($mainNs)->c;

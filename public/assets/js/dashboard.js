@@ -243,7 +243,7 @@ const I18N_TEXT = {
     'Excel File (.xlsx or .csv)': 'Faili ya Excel (.xlsx au .csv)',
     'Upload Excel .xlsx directly, or use CSV.': 'Pakia Excel .xlsx moja kwa moja, au tumia CSV.',
     'Expected columns:': 'Nguzo zinazotarajiwa:',
-    'Max file size is 5MB and max 5000 data rows.': 'Ukubwa wa juu wa faili ni 5MB na mistari ya juu ni 5000.',
+    'Max file size is 25MB and max 20000 data rows.': 'Ukubwa wa juu wa faili ni 25MB na mistari ya juu ni 20000.',
     'The importer creates new products and updates existing ones by SKU.': 'Kiingizaji huunda bidhaa mpya na kusasisha zilizopo kwa SKU.',
     'Import': 'Ingiza',
     'Add New Product': 'Ongeza Bidhaa Mpya',
@@ -348,6 +348,12 @@ const I18N_TEXT = {
     'Invoice number or note': 'Namba ya ankara au maelezo',
     'Product Category': 'Kundi la Bidhaa',
     'e.g., Beverages, Grocery': 'mfano, Vinywaji, Vyakula',
+    'Product': 'Bidhaa',
+    'Select product': 'Chagua bidhaa',
+    'Search products...': 'Tafuta bidhaa...',
+    'Quantity': 'Idadi',
+    'No products available': 'Hakuna bidhaa zilizopo',
+    'Stock:': 'Stoo:',
     'Mobile Money Gateway': 'Lango la Pesa Mtandao',
     'Gateway Mode': 'Hali ya Lango',
     'Mock (Testing)': 'Mock (Majaribio)',
@@ -477,6 +483,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initChartTabs();
     initSidebarOverlay();
     initKeyboardShortcuts();
+    initTableFilters();
 });
 
 // ============================================
@@ -908,6 +915,14 @@ function showAddModal() {
 
 function showNewSaleModal() {
     const csrfToken = escapeHtml(APP_CONFIG.csrfToken || '');
+    const customers = Array.isArray(APP_CONFIG.saleCustomers) ? APP_CONFIG.saleCustomers : [];
+    const products = Array.isArray(APP_CONFIG.saleProducts) ? APP_CONFIG.saleProducts : [];
+    let loadedProducts = [...products];
+
+    const customerOptions = customers.length > 0
+        ? customers.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name || '')}</option>`).join('')
+        : '<option value="1">Walk-in Customer</option>';
+
     const content = `
         <form id="newSaleForm" method="POST" action="?page=sales">
             <input type="hidden" name="action" value="create_entity">
@@ -916,13 +931,23 @@ function showNewSaleModal() {
             <div class="form-group">
                 <label>Customer</label>
                 <select name="customer_id" required>
-                    <option value="1">Walk-in Customer</option>
-                    <option value="2">Mchina</option>
+                    ${customerOptions}
                 </select>
             </div>
             <div class="form-group">
+                <label>Product</label>
+                <input type="text" id="saleProductSearch" placeholder="Search products..." class="form-control" style="margin-bottom:8px;">
+                <select id="saleProductId" name="product_id" ${products.length > 0 ? 'required' : ''}>
+                    <option value="">Select product</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Quantity</label>
+                <input id="saleQuantity" type="number" name="quantity" placeholder="Enter quantity" required min="1" value="1">
+            </div>
+            <div class="form-group">
                 <label>Amount (Tsh)</label>
-                <input type="number" name="amount" placeholder="Enter amount" required min="1">
+                <input id="saleAmount" type="number" name="amount" placeholder="Enter amount" required min="1" readonly>
             </div>
             <div class="form-group">
                 <label>Payment Method</label>
@@ -959,9 +984,127 @@ function showNewSaleModal() {
     ]);
 
     const paymentMethodEl = document.getElementById('salePaymentMethod');
+    const productSearchEl = document.getElementById('saleProductSearch');
+    const productEl = document.getElementById('saleProductId');
+    const quantityEl = document.getElementById('saleQuantity');
+    const amountEl = document.getElementById('saleAmount');
     const mobileMoneyFields = document.getElementById('mobileMoneyFields');
     const mobileMoneyProvider = document.getElementById('mobileMoneyProvider');
     const mobileMoneyPhone = document.getElementById('mobileMoneyPhone');
+    let productSearchTimer = null;
+    let productSearchRequestId = 0;
+
+    const renderProductOptions = (searchTerm = '') => {
+        if (!productEl) {
+            return;
+        }
+
+        const previous = productEl.value;
+        const term = (searchTerm || '').toLowerCase().trim();
+        const source = loadedProducts.filter(p => {
+            if (term === '') {
+                return true;
+            }
+            const name = String(p.name || '').toLowerCase();
+            const category = String(p.category || '').toLowerCase();
+            return name.includes(term) || category.includes(term);
+        });
+
+        productEl.innerHTML = '';
+
+        const first = document.createElement('option');
+        first.value = '';
+        first.textContent = 'Select product';
+        productEl.appendChild(first);
+
+        if (source.length === 0) {
+            const empty = document.createElement('option');
+            empty.value = '';
+            empty.textContent = 'No products available';
+            productEl.appendChild(empty);
+            productEl.required = false;
+            return;
+        }
+
+        source.forEach(p => {
+            const option = document.createElement('option');
+            const category = String(p.category || '').trim();
+            const stock = Number.isFinite(Number(p.stock_qty)) ? Number(p.stock_qty) : 0;
+            const price = Number.isFinite(Number(p.unit_price)) ? Number(p.unit_price) : 0;
+            option.value = String(p.id || '');
+            option.setAttribute('data-price', String(price));
+            option.textContent = `${p.name || ''}${category ? ` - ${category}` : ''} | Stock: ${stock} | Tsh ${price.toLocaleString()}`;
+            productEl.appendChild(option);
+        });
+
+        productEl.required = true;
+        if (previous && source.some(p => String(p.id) === previous)) {
+            productEl.value = previous;
+        }
+    };
+
+    const loadProductsFallback = async () => {
+        if (loadedProducts.length > 0) {
+            return;
+        }
+
+        try {
+            const response = await fetch('products_feed.php?limit=300', {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' },
+                credentials: 'same-origin',
+            });
+            if (!response.ok) {
+                return;
+            }
+
+            const data = await response.json();
+            if (!data || !Array.isArray(data.items)) {
+                return;
+            }
+
+            loadedProducts = data.items;
+            renderProductOptions(productSearchEl?.value || '');
+            syncAmount();
+        } catch (error) {
+            // Keep modal usable even if fallback feed fails.
+        }
+    };
+
+    const runRemoteProductSearch = async (term) => {
+        const requestId = ++productSearchRequestId;
+        try {
+            const response = await fetch(`products_feed.php?q=${encodeURIComponent(term)}&limit=300`, {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' },
+                credentials: 'same-origin',
+            });
+            if (!response.ok || requestId !== productSearchRequestId) {
+                return;
+            }
+
+            const data = await response.json();
+            if (!data || !Array.isArray(data.items)) {
+                return;
+            }
+
+            loadedProducts = data.items;
+            renderProductOptions(term);
+            syncAmount();
+        } catch (error) {
+            // Keep local filtering fallback when network fails.
+        }
+    };
+
+    const syncAmount = () => {
+        if (!productEl || !amountEl || !quantityEl) {
+            return;
+        }
+        const selectedOption = productEl.options[productEl.selectedIndex];
+        const unitPrice = parseFloat(selectedOption?.getAttribute('data-price') || '0');
+        const quantity = Math.max(1, parseInt(quantityEl.value || '1', 10));
+        amountEl.value = String(Math.max(0, Math.round(unitPrice * quantity)));
+    };
 
     const toggleMobileMoneyFields = () => {
         const isMobileMoney = paymentMethodEl?.value === 'Mobile Money';
@@ -977,7 +1120,28 @@ function showNewSaleModal() {
     };
 
     paymentMethodEl?.addEventListener('change', toggleMobileMoneyFields);
+    productSearchEl?.addEventListener('input', () => {
+        const term = productSearchEl.value || '';
+        renderProductOptions(term);
+
+        if (productSearchTimer) {
+            clearTimeout(productSearchTimer);
+        }
+
+        if (term.trim().length < 2) {
+            return;
+        }
+
+        productSearchTimer = setTimeout(() => {
+            runRemoteProductSearch(term.trim());
+        }, 220);
+    });
+    productEl?.addEventListener('change', syncAmount);
+    quantityEl?.addEventListener('input', syncAmount);
+    renderProductOptions('');
     toggleMobileMoneyFields();
+    syncAmount();
+    loadProductsFallback();
 }
 
 function showAddProductModal() {
@@ -1034,7 +1198,7 @@ function showImportProductsModal() {
                 <small style="color:#4B5563;line-height:1.5;display:block;">
                     Upload Excel .xlsx directly, or use CSV.<br>
                     Expected columns: <strong>name, sku, unit_price, stock_qty, reorder_level, category(optional)</strong>.<br>
-                    Max file size is 5MB and max 5000 data rows.<br>
+                    Max file size is 25MB and max 20000 data rows.<br>
                     The importer creates new products and updates existing ones by SKU.
                 </small>
             </div>
@@ -1484,34 +1648,66 @@ function showToast(type, message) {
 // TABLE FILTERING
 // ============================================
 
+const TABLE_FILTER_STATE = {
+    productTable: {
+        search: '',
+        stock: 'all',
+    },
+};
+
+function applyProductTableFilters() {
+    const table = document.getElementById('productTable');
+    if (!table) return;
+
+    const rows = table.querySelectorAll('tbody tr');
+    const state = TABLE_FILTER_STATE.productTable;
+    const searchTerm = (state.search || '').toLowerCase();
+    const stockFilter = (state.stock || 'all').toLowerCase();
+
+    rows.forEach(row => {
+        const text = (row.textContent || '').toLowerCase();
+        const stockStatus = (row.dataset.stock || '').toLowerCase();
+        const matchesSearch = searchTerm === '' || text.includes(searchTerm);
+        const matchesStock = stockFilter === 'all' || stockStatus === stockFilter;
+
+        row.style.display = matchesSearch && matchesStock ? '' : 'none';
+    });
+}
+
+function initTableFilters() {
+    const productSearch = document.getElementById('productSearch');
+    productSearch?.addEventListener('input', () => {
+        filterTable('productTable', productSearch.value);
+    });
+}
+
 function filterTable(tableId, searchTerm) {
+    if (tableId === 'productTable') {
+        TABLE_FILTER_STATE.productTable.search = (searchTerm || '').toString();
+        applyProductTableFilters();
+        return;
+    }
+
     const table = document.getElementById(tableId);
     if (!table) return;
 
     const rows = table.querySelectorAll('tbody tr');
-    const term = searchTerm.toLowerCase();
+    const term = (searchTerm || '').toString().toLowerCase();
 
     rows.forEach(row => {
-        const text = row.textContent.toLowerCase();
+        const text = (row.textContent || '').toLowerCase();
         row.style.display = text.includes(term) ? '' : 'none';
     });
 }
 
 function filterByStock(value) {
-    const table = document.getElementById('productTable');
-    if (!table) return;
-
-    const rows = table.querySelectorAll('tbody tr');
-
-    rows.forEach(row => {
-        const stockStatus = row.dataset.stock;
-        if (value === 'all') {
-            row.style.display = '';
-        } else {
-            row.style.display = stockStatus === value ? '' : 'none';
-        }
-    });
+    TABLE_FILTER_STATE.productTable.stock = (value || 'all').toString().toLowerCase();
+    applyProductTableFilters();
 }
+
+window.filterTable = filterTable;
+window.filterByStock = filterByStock;
+window.filterByPayment = filterByPayment;
 
 function filterByPayment(tableId, value) {
     const table = document.getElementById(tableId);
