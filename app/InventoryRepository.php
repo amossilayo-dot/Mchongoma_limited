@@ -17,10 +17,12 @@ final class InventoryRepository
         $stockExpression = $columns['quantity'];
         $reorderExpression = $columns['reorder'] !== null ? $columns['reorder'] : '5';
         $priceExpression = $columns['price'];
+        $categoryExpression = $columns['category'] !== null ? $columns['category'] : 'NULL';
 
         $stmt = $this->pdo->prepare(
             "SELECT id, name,
                     $skuExpression AS sku,
+                    $categoryExpression AS category,
                     $stockExpression AS stock_qty,
                     $reorderExpression AS reorder_level,
                     $priceExpression AS unit_price,
@@ -51,6 +53,8 @@ final class InventoryRepository
 
     public function createProduct(array $data): int
     {
+        $columns = $this->resolveProductColumnMap();
+
         // Validate required fields
         $name = trim($data['name'] ?? '');
         if ($name === '' || strlen($name) > 255) {
@@ -58,7 +62,7 @@ final class InventoryRepository
         }
 
         $sku = trim($data['sku'] ?? '');
-        if ($sku === '' || strlen($sku) > 100 || !preg_match('/^[A-Za-z0-9\-_]+$/', $sku)) {
+        if ($columns['sku'] !== null && ($sku === '' || strlen($sku) > 100 || !preg_match('/^[A-Za-z0-9\-_]+$/', $sku))) {
             throw new InvalidArgumentException('SKU is required and must be alphanumeric (max 100 chars)');
         }
 
@@ -77,22 +81,53 @@ final class InventoryRepository
             throw new InvalidArgumentException('Unit price must be a non-negative number');
         }
 
+        $category = trim((string) ($data['category'] ?? ''));
+        if ($category !== '' && strlen($category) > 100) {
+            throw new InvalidArgumentException('Category must be 100 characters or less');
+        }
+
+        $columnNames = ['name'];
+        $placeholders = [':name'];
+        $params = [':name' => $name];
+
+        if ($columns['sku'] !== null) {
+            $columnNames[] = $columns['sku'];
+            $placeholders[] = ':sku';
+            $params[':sku'] = $sku;
+        }
+
+        if ($columns['category'] !== null) {
+            $columnNames[] = $columns['category'];
+            $placeholders[] = ':category';
+            $params[':category'] = $category !== '' ? $category : null;
+        }
+
+        $columnNames[] = $columns['quantity'];
+        $placeholders[] = ':quantity';
+        $params[':quantity'] = (int) $stockQty;
+
+        if ($columns['reorder'] !== null) {
+            $columnNames[] = $columns['reorder'];
+            $placeholders[] = ':reorder';
+            $params[':reorder'] = (int) $reorderLevel;
+        }
+
+        $columnNames[] = $columns['price'];
+        $placeholders[] = ':price';
+        $params[':price'] = (float) $unitPrice;
+
         $stmt = $this->pdo->prepare(
-            'INSERT INTO products (name, sku, stock_qty, reorder_level, unit_price)
-             VALUES (:name, :sku, :stock_qty, :reorder_level, :unit_price)'
+            'INSERT INTO products (' . implode(', ', $columnNames) . ')\n'
+            . 'VALUES (' . implode(', ', $placeholders) . ')'
         );
-        $stmt->execute([
-            ':name' => $name,
-            ':sku' => $sku,
-            ':stock_qty' => (int) $stockQty,
-            ':reorder_level' => (int) $reorderLevel,
-            ':unit_price' => (float) $unitPrice,
-        ]);
+        $stmt->execute($params);
         return (int) $this->pdo->lastInsertId();
     }
 
     public function updateProduct(int $id, array $data): bool
     {
+        $columns = $this->resolveProductColumnMap();
+
         // Validate required fields
         $name = trim($data['name'] ?? '');
         if ($name === '' || strlen($name) > 255) {
@@ -100,7 +135,7 @@ final class InventoryRepository
         }
 
         $sku = trim($data['sku'] ?? '');
-        if ($sku === '' || strlen($sku) > 100 || !preg_match('/^[A-Za-z0-9\-_]+$/', $sku)) {
+        if ($columns['sku'] !== null && ($sku === '' || strlen($sku) > 100 || !preg_match('/^[A-Za-z0-9\-_]+$/', $sku))) {
             throw new InvalidArgumentException('SKU is required and must be alphanumeric (max 100 chars)');
         }
 
@@ -119,18 +154,42 @@ final class InventoryRepository
             throw new InvalidArgumentException('Unit price must be a non-negative number');
         }
 
-        $stmt = $this->pdo->prepare(
-            'UPDATE products SET name = :name, sku = :sku, stock_qty = :stock_qty,
-             reorder_level = :reorder_level, unit_price = :unit_price WHERE id = :id'
-        );
-        return $stmt->execute([
+        $category = trim((string) ($data['category'] ?? ''));
+        if ($category !== '' && strlen($category) > 100) {
+            throw new InvalidArgumentException('Category must be 100 characters or less');
+        }
+
+        $setParts = ['name = :name'];
+        $params = [
             ':id' => $id,
             ':name' => $name,
-            ':sku' => $sku,
-            ':stock_qty' => (int) $stockQty,
-            ':reorder_level' => (int) $reorderLevel,
-            ':unit_price' => (float) $unitPrice,
-        ]);
+            ':quantity' => (int) $stockQty,
+            ':price' => (float) $unitPrice,
+        ];
+
+        if ($columns['sku'] !== null) {
+            $setParts[] = $columns['sku'] . ' = :sku';
+            $params[':sku'] = $sku;
+        }
+
+        if ($columns['category'] !== null) {
+            $setParts[] = $columns['category'] . ' = :category';
+            $params[':category'] = $category !== '' ? $category : null;
+        }
+
+        $setParts[] = $columns['quantity'] . ' = :quantity';
+
+        if ($columns['reorder'] !== null) {
+            $setParts[] = $columns['reorder'] . ' = :reorder';
+            $params[':reorder'] = (int) $reorderLevel;
+        }
+
+        $setParts[] = $columns['price'] . ' = :price';
+
+        $stmt = $this->pdo->prepare(
+            'UPDATE products SET ' . implode(', ', $setParts) . ' WHERE id = :id'
+        );
+        return $stmt->execute($params);
     }
 
     public function deleteProduct(int $id): bool
@@ -146,10 +205,12 @@ final class InventoryRepository
         $stockExpression = $columns['quantity'];
         $reorderExpression = $columns['reorder'] !== null ? $columns['reorder'] : '5';
         $priceExpression = $columns['price'];
+        $categoryExpression = $columns['category'] !== null ? $columns['category'] : 'NULL';
 
         $stmt = $this->pdo->query(
             "SELECT id, name,
                     $skuExpression AS sku,
+                    $categoryExpression AS category,
                     $stockExpression AS stock_qty,
                     $reorderExpression AS reorder_level,
                     $priceExpression AS unit_price
@@ -162,16 +223,71 @@ final class InventoryRepository
 
     public function importProductsFromRows(array $rows): array
     {
-        $existsStmt = $this->pdo->prepare('SELECT sku FROM products WHERE sku = :sku LIMIT 1');
-        $upsertStmt = $this->pdo->prepare(
-            'INSERT INTO products (name, sku, stock_qty, reorder_level, unit_price)
-             VALUES (:name, :sku, :stock_qty, :reorder_level, :unit_price)
-             ON DUPLICATE KEY UPDATE
-                name = VALUES(name),
-                stock_qty = VALUES(stock_qty),
-                reorder_level = VALUES(reorder_level),
-                unit_price = VALUES(unit_price)'
-        );
+        $columns = $this->resolveProductColumnMap();
+        $hasSkuColumn = $columns['sku'] !== null;
+
+        if ($hasSkuColumn) {
+            $existsStmt = $this->pdo->prepare('SELECT id FROM products WHERE ' . $columns['sku'] . ' = :sku LIMIT 1');
+
+            $insertCols = ['name', $columns['sku'], $columns['quantity'], $columns['price']];
+            $insertVals = [':name', ':sku', ':quantity', ':price'];
+            $updateParts = [
+                'name = VALUES(name)',
+                $columns['quantity'] . ' = VALUES(' . $columns['quantity'] . ')',
+                $columns['price'] . ' = VALUES(' . $columns['price'] . ')',
+            ];
+
+            if ($columns['category'] !== null) {
+                $insertCols[] = $columns['category'];
+                $insertVals[] = ':category';
+                $updateParts[] = $columns['category'] . ' = VALUES(' . $columns['category'] . ')';
+            }
+
+            if ($columns['reorder'] !== null) {
+                $insertCols[] = $columns['reorder'];
+                $insertVals[] = ':reorder';
+                $updateParts[] = $columns['reorder'] . ' = VALUES(' . $columns['reorder'] . ')';
+            }
+
+            $upsertStmt = $this->pdo->prepare(
+                'INSERT INTO products (' . implode(', ', $insertCols) . ') '
+                . 'VALUES (' . implode(', ', $insertVals) . ') '
+                . 'ON DUPLICATE KEY UPDATE ' . implode(', ', $updateParts)
+            );
+        } else {
+            $existsStmt = $this->pdo->prepare('SELECT id FROM products WHERE name = :name LIMIT 1');
+
+            $insertCols = ['name', $columns['quantity'], $columns['price']];
+            $insertVals = [':name', ':quantity', ':price'];
+            if ($columns['category'] !== null) {
+                $insertCols[] = $columns['category'];
+                $insertVals[] = ':category';
+            }
+            if ($columns['reorder'] !== null) {
+                $insertCols[] = $columns['reorder'];
+                $insertVals[] = ':reorder';
+            }
+
+            $insertStmt = $this->pdo->prepare(
+                'INSERT INTO products (' . implode(', ', $insertCols) . ') '
+                . 'VALUES (' . implode(', ', $insertVals) . ')'
+            );
+
+            $updateParts = [
+                $columns['quantity'] . ' = :quantity',
+                $columns['price'] . ' = :price',
+            ];
+            if ($columns['category'] !== null) {
+                $updateParts[] = $columns['category'] . ' = :category';
+            }
+            if ($columns['reorder'] !== null) {
+                $updateParts[] = $columns['reorder'] . ' = :reorder';
+            }
+
+            $updateStmt = $this->pdo->prepare(
+                'UPDATE products SET ' . implode(', ', $updateParts) . ' WHERE id = :id'
+            );
+        }
 
         $created = 0;
         $updated = 0;
@@ -179,20 +295,41 @@ final class InventoryRepository
         $this->pdo->beginTransaction();
         try {
             foreach ($rows as $row) {
-                $existsStmt->execute([':sku' => $row['sku']]);
-                $existing = (bool) $existsStmt->fetch();
-
-                $upsertStmt->execute([
+                $params = [
                     ':name' => $row['name'],
-                    ':sku' => $row['sku'],
-                    ':stock_qty' => $row['stock_qty'],
-                    ':reorder_level' => $row['reorder_level'],
-                    ':unit_price' => $row['unit_price'],
-                ]);
+                    ':quantity' => (int) $row['stock_qty'],
+                    ':price' => (float) $row['unit_price'],
+                ];
+                if ($columns['category'] !== null) {
+                    $params[':category'] = (($row['category'] ?? '') !== '') ? (string) $row['category'] : null;
+                }
+                if ($columns['reorder'] !== null) {
+                    $params[':reorder'] = (int) $row['reorder_level'];
+                }
 
-                if ($existing) {
+                if ($hasSkuColumn) {
+                    $params[':sku'] = (string) $row['sku'];
+                    $existsStmt->execute([':sku' => (string) $row['sku']]);
+                    $existing = (bool) $existsStmt->fetch();
+                    $upsertStmt->execute($params);
+
+                    if ($existing) {
+                        $updated++;
+                    } else {
+                        $created++;
+                    }
+                    continue;
+                }
+
+                $existsStmt->execute([':name' => (string) $row['name']]);
+                $existingRow = $existsStmt->fetch();
+
+                if ($existingRow && isset($existingRow['id'])) {
+                    $params[':id'] = (int) $existingRow['id'];
+                    $updateStmt->execute($params);
                     $updated++;
                 } else {
+                    $insertStmt->execute($params);
                     $created++;
                 }
             }
@@ -223,6 +360,7 @@ final class InventoryRepository
 
         $this->productColumnMap = [
             'sku' => isset($columns['sku']) ? 'sku' : null,
+            'category' => isset($columns['category']) ? 'category' : null,
             'quantity' => isset($columns['stock_qty']) ? 'stock_qty' : 'stock',
             'reorder' => isset($columns['reorder_level']) ? 'reorder_level' : null,
             'price' => isset($columns['unit_price']) ? 'unit_price' : 'price',

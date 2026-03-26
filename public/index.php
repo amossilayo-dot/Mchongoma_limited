@@ -613,6 +613,7 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): ar
                 (new InventoryRepository($pdo))->createProduct([
                     'name' => (string) ($_POST['name'] ?? ''),
                     'sku' => (string) ($_POST['sku'] ?? ''),
+                    'category' => (string) ($_POST['category'] ?? ''),
                     'unit_price' => (float) ($_POST['unit_price'] ?? 0),
                     'stock_qty' => (int) ($_POST['stock_qty'] ?? 0),
                     'reorder_level' => (int) ($_POST['reorder_level'] ?? 5),
@@ -813,6 +814,7 @@ function buildProductRowsFromCsv(string $csvFilePath): array
             'unit_price' => 2,
             'stock_qty' => 3,
             'reorder_level' => 4,
+            'category' => 5,
         ];
 
         $row = $firstRow;
@@ -854,6 +856,7 @@ function buildProductRowsFromCsv(string $csvFilePath): array
                     'unit_price' => $unitPrice,
                     'stock_qty' => $stockQty,
                     'reorder_level' => $reorderLevel,
+                    'category' => trim((string) ($row[$headerMap['category']] ?? '')),
                 ];
                 $seenSkus[strtolower($sku)] = true;
                 $processedRows++;
@@ -910,6 +913,7 @@ function buildProductRowsFromCsv(string $csvFilePath): array
             'unit_price' => $unitPrice,
             'stock_qty' => $stockQty,
             'reorder_level' => $reorderLevel,
+            'category' => trim((string) ($row[$headerMap['category']] ?? '')),
         ];
 
         $seenSkus[strtolower($sku)] = true;
@@ -1007,7 +1011,7 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
         if (count($parsed['rows']) === 0) {
             return [
                 'type' => 'warning',
-                'message' => 'No valid product rows found. Ensure file has columns: name, sku, unit_price, stock_qty, reorder_level.',
+                'message' => 'No valid product rows found. Ensure file has columns: name, sku, unit_price, stock_qty, reorder_level (category optional).',
             ];
         }
 
@@ -1029,11 +1033,23 @@ function handleProductImport(InventoryRepository $inventoryRepo): array
         ];
     } catch (Throwable $exception) {
         error_log('[POS Import] ' . $exception->getMessage());
+        $rawMessage = (string) $exception->getMessage();
+        $safeMessage = preg_replace('/[\r\n\t]+/', ' ', $rawMessage);
+        $safeMessage = $safeMessage !== null ? trim($safeMessage) : '';
+        if (strlen($safeMessage) > 180) {
+            $safeMessage = substr($safeMessage, 0, 180) . '...';
+        }
+
+        $friendlyMessage = 'Import failed while processing the file. Please review your CSV/XLSX and try again.';
+        if ($safeMessage !== '') {
+            $friendlyMessage .= ' Reason: ' . $safeMessage;
+        }
+
         return [
             'type' => 'error',
             'message' => isDebugMode()
                 ? 'Import failed: ' . $exception->getMessage()
-                : 'Import failed while processing the file. Please review your CSV/XLSX and try again.',
+                : $friendlyMessage,
         ];
     }
 }
@@ -1067,6 +1083,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
             'unit_price' => 2,
             'stock_qty' => 3,
             'reorder_level' => 4,
+            'category' => 5,
         ];
     }
 
@@ -1117,6 +1134,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
             'unit_price' => $unitPrice,
             'stock_qty' => $stockQty,
             'reorder_level' => $reorderLevel,
+            'category' => trim((string) ($row[$headerMap['category']] ?? '')),
         ];
 
         $seenSkus[strtolower($sku)] = true;
@@ -1399,6 +1417,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                             <tr>
                                 <th>Product Name</th>
                                 <th>SKU</th>
+                                <th>Category</th>
                                 <th>Stock Qty</th>
                                 <th>Reorder Level</th>
                                 <th>Unit Price</th>
@@ -1411,6 +1430,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                 <tr data-stock="<?= $product['stock_qty'] <= $product['reorder_level'] ? 'low' : 'ok' ?>">
                                     <td><strong><?= e($product['name']) ?></strong></td>
                                     <td><code><?= e($product['sku']) ?></code></td>
+                                    <td><?= e((string) ($product['category'] ?? '-')) ?></td>
                                     <td><?= $product['stock_qty'] ?></td>
                                     <td><?= $product['reorder_level'] ?></td>
                                     <td>Tsh <?= moneyFormat($product['unit_price']) ?></td>

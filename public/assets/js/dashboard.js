@@ -346,6 +346,8 @@ const I18N_TEXT = {
     'Payment Reference (Optional)': 'Kumbukumbu ya Malipo (si lazima)',
     '07XXXXXXXX or 2557XXXXXXXX': '07XXXXXXXX au 2557XXXXXXXX',
     'Invoice number or note': 'Namba ya ankara au maelezo',
+    'Product Category': 'Kundi la Bidhaa',
+    'e.g., Beverages, Grocery': 'mfano, Vinywaji, Vyakula',
     'Mobile Money Gateway': 'Lango la Pesa Mtandao',
     'Gateway Mode': 'Hali ya Lango',
     'Mock (Testing)': 'Mock (Majaribio)',
@@ -994,6 +996,10 @@ function showAddProductModal() {
                 <input type="text" name="sku" placeholder="e.g., SKU-PRD-001" required>
             </div>
             <div class="form-group">
+                <label>Product Category</label>
+                <input type="text" name="category" placeholder="e.g., Beverages, Grocery">
+            </div>
+            <div class="form-group">
                 <label>Unit Price (Tsh)</label>
                 <input type="number" name="unit_price" placeholder="Enter price" required min="0">
             </div>
@@ -1027,7 +1033,7 @@ function showImportProductsModal() {
             <div class="form-group" style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:8px;padding:12px;">
                 <small style="color:#4B5563;line-height:1.5;display:block;">
                     Upload Excel .xlsx directly, or use CSV.<br>
-                    Expected columns: <strong>name, sku, unit_price, stock_qty, reorder_level</strong>.<br>
+                    Expected columns: <strong>name, sku, unit_price, stock_qty, reorder_level, category(optional)</strong>.<br>
                     Max file size is 5MB and max 5000 data rows.<br>
                     The importer creates new products and updates existing ones by SKU.
                 </small>

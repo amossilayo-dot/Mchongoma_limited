@@ -12,8 +12,8 @@ function readXlsxRows(string $xlsxPath, int $maxRows = 5000): array
         throw new RuntimeException('XLSX file not found.');
     }
 
-    if (!class_exists('PharData')) {
-        throw new RuntimeException('XLSX support is unavailable: PharData extension is missing.');
+    if (!class_exists('ZipArchive') && !class_exists('PharData')) {
+        throw new RuntimeException('XLSX support is unavailable: enable ZipArchive or Phar extension in PHP.');
     }
 
     $tmpDir = rtrim(sys_get_temp_dir(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'pos_xlsx_' . bin2hex(random_bytes(8));
@@ -22,8 +22,7 @@ function readXlsxRows(string $xlsxPath, int $maxRows = 5000): array
     }
 
     try {
-        $archive = new PharData($xlsxPath);
-        $archive->extractTo($tmpDir, null, true);
+        extractXlsxArchive($xlsxPath, $tmpDir);
 
         $sharedStrings = loadSharedStrings($tmpDir);
         $sheetPath = resolveFirstSheetPath($tmpDir);
@@ -81,6 +80,39 @@ function readXlsxRows(string $xlsxPath, int $maxRows = 5000): array
         return $rows;
     } finally {
         deleteDirectoryRecursive($tmpDir);
+    }
+}
+
+function extractXlsxArchive(string $xlsxPath, string $tmpDir): void
+{
+    if (class_exists('ZipArchive')) {
+        $zip = new ZipArchive();
+        $openResult = $zip->open($xlsxPath);
+        if ($openResult === true) {
+            if ($zip->extractTo($tmpDir) === false) {
+                $zip->close();
+                throw new RuntimeException('Could not extract XLSX archive.');
+            }
+            $zip->close();
+            return;
+        }
+    }
+
+    if (!class_exists('PharData')) {
+        throw new RuntimeException('Could not open XLSX archive. Enable ZipArchive for best compatibility.');
+    }
+
+    // PharData expects a recognized archive extension, so copy XLSX as .zip.
+    $zipAliasPath = $tmpDir . DIRECTORY_SEPARATOR . 'source.xlsx.zip';
+    if (!copy($xlsxPath, $zipAliasPath)) {
+        throw new RuntimeException('Could not prepare XLSX file for extraction.');
+    }
+
+    try {
+        $archive = new PharData($zipAliasPath);
+        $archive->extractTo($tmpDir, null, true);
+    } catch (Throwable $exception) {
+        throw new RuntimeException('Failed to extract XLSX archive. Please re-save the file as standard Excel .xlsx or CSV.', 0, $exception);
     }
 }
 
