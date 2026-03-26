@@ -255,7 +255,16 @@ final class InventoryRepository
                 . 'ON DUPLICATE KEY UPDATE ' . implode(', ', $updateParts)
             );
         } else {
-            $existsStmt = $this->pdo->prepare('SELECT id FROM products WHERE name = :name LIMIT 1');
+            if ($columns['category'] !== null) {
+                $existsStmt = $this->pdo->prepare(
+                    'SELECT id FROM products
+                     WHERE name = :name
+                       AND COALESCE(' . $columns['category'] . ', "") = COALESCE(:category_match, "")
+                     LIMIT 1'
+                );
+            } else {
+                $existsStmt = $this->pdo->prepare('SELECT id FROM products WHERE name = :name LIMIT 1');
+            }
 
             $insertCols = ['name', $columns['quantity'], $columns['price']];
             $insertVals = [':name', ':quantity', ':price'];
@@ -321,12 +330,27 @@ final class InventoryRepository
                     continue;
                 }
 
-                $existsStmt->execute([':name' => (string) $row['name']]);
+                $matchParams = [':name' => (string) $row['name']];
+                if ($columns['category'] !== null) {
+                    $matchParams[':category_match'] = (($row['category'] ?? '') !== '') ? (string) $row['category'] : '';
+                }
+                $existsStmt->execute($matchParams);
                 $existingRow = $existsStmt->fetch();
 
                 if ($existingRow && isset($existingRow['id'])) {
-                    $params[':id'] = (int) $existingRow['id'];
-                    $updateStmt->execute($params);
+                    $updateParams = [
+                        ':id' => (int) $existingRow['id'],
+                        ':quantity' => (int) $row['stock_qty'],
+                        ':price' => (float) $row['unit_price'],
+                    ];
+                    if ($columns['category'] !== null) {
+                        $updateParams[':category'] = (($row['category'] ?? '') !== '') ? (string) $row['category'] : null;
+                    }
+                    if ($columns['reorder'] !== null) {
+                        $updateParams[':reorder'] = (int) $row['reorder_level'];
+                    }
+
+                    $updateStmt->execute($updateParams);
                     $updated++;
                 } else {
                     $insertStmt->execute($params);

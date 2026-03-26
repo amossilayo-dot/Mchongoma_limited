@@ -777,6 +777,89 @@ function parseFloatValue(string $value, ?float $default = null): ?float
     return $parsed < 0 ? null : $parsed;
 }
 
+function generateImportSku(string $name, string $category, int $lineNumber): string
+{
+    $namePart = strtoupper(trim($name));
+    $categoryPart = strtoupper(trim($category));
+
+    $namePart = $namePart !== '' ? $namePart : 'ITEM';
+    $raw = $namePart . ($categoryPart !== '' ? '-' . $categoryPart : '');
+    $sanitized = preg_replace('/[^A-Z0-9\-]+/', '-', $raw);
+    $sanitized = $sanitized !== null ? trim($sanitized, '-') : '';
+
+    if ($sanitized === '') {
+        return 'ITEM-' . $lineNumber;
+    }
+
+    $hash = strtoupper(substr(sha1($namePart . '|' . $categoryPart), 0, 8));
+    $prefix = substr($sanitized, 0, 48);
+    return $prefix . '-' . $hash;
+}
+
+function resolveProductImportHeaderMap(array $normalizedHeaders): array
+{
+    $headerMap = [];
+    foreach ($normalizedHeaders as $index => $header) {
+        $headerMap[$header] = $index;
+    }
+
+    $requiredStandard = ['name', 'sku', 'unit_price'];
+    $hasStandardHeader = !array_diff($requiredStandard, $normalizedHeaders);
+    if ($hasStandardHeader) {
+        return [
+            'hasHeaderRow' => true,
+            'headerMap' => $headerMap,
+            'skuOptional' => false,
+            'unitPriceFallbackIndex' => null,
+        ];
+    }
+
+    // Support common supplier sheet format: Items, Size, Cost, Selling, Unit.
+    $hasItemsHeader = in_array('items', $normalizedHeaders, true) || in_array('item', $normalizedHeaders, true);
+    $hasPriceHeader = in_array('selling', $normalizedHeaders, true) || in_array('unit_price', $normalizedHeaders, true) || in_array('cost', $normalizedHeaders, true) || in_array('price', $normalizedHeaders, true);
+    $hasQtyHeader = in_array('unit', $normalizedHeaders, true) || in_array('qty', $normalizedHeaders, true) || in_array('stock_qty', $normalizedHeaders, true) || in_array('quantity', $normalizedHeaders, true);
+
+    if ($hasItemsHeader && $hasPriceHeader && $hasQtyHeader) {
+        $nameIndex = $headerMap['items'] ?? $headerMap['item'] ?? null;
+        $categoryIndex = $headerMap['size'] ?? $headerMap['category'] ?? null;
+        $priceIndex = $headerMap['selling'] ?? $headerMap['unit_price'] ?? $headerMap['price'] ?? $headerMap['cost'] ?? null;
+        $fallbackPriceIndex = ($priceIndex === ($headerMap['cost'] ?? null))
+            ? ($headerMap['selling'] ?? null)
+            : ($headerMap['cost'] ?? null);
+        $stockIndex = $headerMap['unit'] ?? $headerMap['qty'] ?? $headerMap['quantity'] ?? $headerMap['stock_qty'] ?? null;
+
+        if ($nameIndex !== null && $priceIndex !== null && $stockIndex !== null) {
+            return [
+                'hasHeaderRow' => true,
+                'headerMap' => [
+                    'name' => $nameIndex,
+                    'sku' => $headerMap['sku'] ?? -1,
+                    'unit_price' => $priceIndex,
+                    'stock_qty' => $stockIndex,
+                    'reorder_level' => $headerMap['reorder_level'] ?? -1,
+                    'category' => $categoryIndex ?? -1,
+                ],
+                'skuOptional' => true,
+                'unitPriceFallbackIndex' => $fallbackPriceIndex,
+            ];
+        }
+    }
+
+    return [
+        'hasHeaderRow' => false,
+        'headerMap' => [
+            'name' => 0,
+            'sku' => 1,
+            'unit_price' => 2,
+            'stock_qty' => 3,
+            'reorder_level' => 4,
+            'category' => 5,
+        ],
+        'skuOptional' => false,
+        'unitPriceFallbackIndex' => null,
+    ];
+}
+
 function buildProductRowsFromCsv(string $csvFilePath): array
 {
     $handle = fopen($csvFilePath, 'rb');
@@ -791,10 +874,11 @@ function buildProductRowsFromCsv(string $csvFilePath): array
     }
 
     $normalizedHeaders = array_map(static fn($h) => normalizeImportHeader((string) $h), $firstRow);
-    $requiredHeaders = ['name', 'sku', 'unit_price'];
-
-    $hasHeaderRow = !array_diff($requiredHeaders, $normalizedHeaders);
-    $headerMap = [];
+    $headerConfig = resolveProductImportHeaderMap($normalizedHeaders);
+    $hasHeaderRow = (bool) $headerConfig['hasHeaderRow'];
+    $headerMap = (array) $headerConfig['headerMap'];
+    $skuOptional = (bool) $headerConfig['skuOptional'];
+    $unitPriceFallbackIndex = $headerConfig['unitPriceFallbackIndex'];
     $rows = [];
     $errors = [];
     $skipped = 0;
@@ -803,32 +887,27 @@ function buildProductRowsFromCsv(string $csvFilePath): array
     $processedRows = 0;
     $seenSkus = [];
 
-    if ($hasHeaderRow) {
-        foreach ($normalizedHeaders as $index => $header) {
-            $headerMap[$header] = $index;
-        }
-    } else {
-        $headerMap = [
-            'name' => 0,
-            'sku' => 1,
-            'unit_price' => 2,
-            'stock_qty' => 3,
-            'reorder_level' => 4,
-            'category' => 5,
-        ];
-
+    if (!$hasHeaderRow) {
         $row = $firstRow;
         $lineNumber = 1;
         $name = trim((string) ($row[$headerMap['name']] ?? ''));
         $sku = trim((string) ($row[$headerMap['sku']] ?? ''));
+        $category = trim((string) ($row[$headerMap['category']] ?? ''));
+
+        if ($skuOptional && $sku === '') {
+            $sku = generateImportSku($name, $category, $lineNumber);
+        }
 
         if ($name !== '' || $sku !== '') {
-            if ($name === '' || $sku === '') {
+            if ($name === '' || (!$skuOptional && $sku === '')) {
                 $errors[] = 'Row 1: name and sku are required.';
             } elseif (isset($seenSkus[strtolower($sku)])) {
                 $errors[] = 'Row 1: duplicate sku in file (' . $sku . ').';
             } else {
                 $unitPrice = parseFloatValue((string) ($row[$headerMap['unit_price']] ?? ''), null);
+                if ($unitPrice === null && is_int($unitPriceFallbackIndex) && $unitPriceFallbackIndex >= 0) {
+                    $unitPrice = parseFloatValue((string) ($row[$unitPriceFallbackIndex] ?? ''), null);
+                }
                 $stockQty = parseIntValue((string) ($row[$headerMap['stock_qty']] ?? ''), 0);
                 $reorderLevel = parseIntValue((string) ($row[$headerMap['reorder_level']] ?? ''), 5);
 
@@ -856,7 +935,7 @@ function buildProductRowsFromCsv(string $csvFilePath): array
                     'unit_price' => $unitPrice,
                     'stock_qty' => $stockQty,
                     'reorder_level' => $reorderLevel,
-                    'category' => trim((string) ($row[$headerMap['category']] ?? '')),
+                    'category' => $category,
                 ];
                 $seenSkus[strtolower($sku)] = true;
                 $processedRows++;
@@ -878,8 +957,13 @@ function buildProductRowsFromCsv(string $csvFilePath): array
 
         $name = trim((string) ($row[$headerMap['name']] ?? ''));
         $sku = trim((string) ($row[$headerMap['sku']] ?? ''));
+        $category = trim((string) ($row[$headerMap['category']] ?? ''));
 
-        if ($name === '' || $sku === '') {
+        if ($skuOptional && $sku === '') {
+            $sku = generateImportSku($name, $category, $lineNumber);
+        }
+
+        if ($name === '' || (!$skuOptional && $sku === '')) {
             $errors[] = 'Row ' . $lineNumber . ': name and sku are required.';
             continue;
         }
@@ -890,6 +974,9 @@ function buildProductRowsFromCsv(string $csvFilePath): array
         }
 
         $unitPrice = parseFloatValue((string) ($row[$headerMap['unit_price']] ?? ''), null);
+        if ($unitPrice === null && is_int($unitPriceFallbackIndex) && $unitPriceFallbackIndex >= 0) {
+            $unitPrice = parseFloatValue((string) ($row[$unitPriceFallbackIndex] ?? ''), null);
+        }
         if ($unitPrice === null) {
             $errors[] = 'Row ' . $lineNumber . ': unit_price must be a non-negative number.';
             continue;
@@ -913,7 +1000,7 @@ function buildProductRowsFromCsv(string $csvFilePath): array
             'unit_price' => $unitPrice,
             'stock_qty' => $stockQty,
             'reorder_level' => $reorderLevel,
-            'category' => trim((string) ($row[$headerMap['category']] ?? '')),
+            'category' => $category,
         ];
 
         $seenSkus[strtolower($sku)] = true;
@@ -1063,29 +1150,15 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
 
     $firstRow = array_map(static fn($v) => (string) $v, $tableRows[0]);
     $normalizedHeaders = array_map(static fn($h) => normalizeImportHeader((string) $h), $firstRow);
-    $requiredHeaders = ['name', 'sku', 'unit_price'];
-
-    $hasHeaderRow = !array_diff($requiredHeaders, $normalizedHeaders);
-    $headerMap = [];
+    $headerConfig = resolveProductImportHeaderMap($normalizedHeaders);
+    $hasHeaderRow = (bool) $headerConfig['hasHeaderRow'];
+    $headerMap = (array) $headerConfig['headerMap'];
+    $skuOptional = (bool) $headerConfig['skuOptional'];
+    $unitPriceFallbackIndex = $headerConfig['unitPriceFallbackIndex'];
     $rows = [];
     $errors = [];
     $skipped = 0;
     $seenSkus = [];
-
-    if ($hasHeaderRow) {
-        foreach ($normalizedHeaders as $index => $header) {
-            $headerMap[$header] = $index;
-        }
-    } else {
-        $headerMap = [
-            'name' => 0,
-            'sku' => 1,
-            'unit_price' => 2,
-            'stock_qty' => 3,
-            'reorder_level' => 4,
-            'category' => 5,
-        ];
-    }
 
     $startIndex = $hasHeaderRow ? 1 : 0;
     for ($i = $startIndex; $i < count($tableRows); $i++) {
@@ -1099,8 +1172,13 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
 
         $name = trim((string) ($row[$headerMap['name']] ?? ''));
         $sku = trim((string) ($row[$headerMap['sku']] ?? ''));
+        $category = trim((string) ($row[$headerMap['category']] ?? ''));
 
-        if ($name === '' || $sku === '') {
+        if ($skuOptional && $sku === '') {
+            $sku = generateImportSku($name, $category, $lineNumber);
+        }
+
+        if ($name === '' || (!$skuOptional && $sku === '')) {
             $errors[] = 'Row ' . $lineNumber . ': name and sku are required.';
             continue;
         }
@@ -1111,6 +1189,9 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
         }
 
         $unitPrice = parseFloatValue((string) ($row[$headerMap['unit_price']] ?? ''), null);
+        if ($unitPrice === null && is_int($unitPriceFallbackIndex) && $unitPriceFallbackIndex >= 0) {
+            $unitPrice = parseFloatValue((string) ($row[$unitPriceFallbackIndex] ?? ''), null);
+        }
         if ($unitPrice === null) {
             $errors[] = 'Row ' . $lineNumber . ': unit_price must be a non-negative number.';
             continue;
@@ -1134,7 +1215,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
             'unit_price' => $unitPrice,
             'stock_qty' => $stockQty,
             'reorder_level' => $reorderLevel,
-            'category' => trim((string) ($row[$headerMap['category']] ?? '')),
+            'category' => $category,
         ];
 
         $seenSkus[strtolower($sku)] = true;
