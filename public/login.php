@@ -72,6 +72,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         <h2>Welcome back</h2>
         <p class="login-subtitle">Sign in to continue to your dashboard</p>
 
+        <?php if (!isProductionEnvironment() && isDemoLoginEnabled()): ?>
+            <p class="login-hint" style="margin-top: 0; margin-bottom: 12px;">
+                Offline demo: <strong>admin</strong> / <strong>admin123</strong>
+            </p>
+        <?php endif; ?>
+
         <?php if ($error !== null): ?>
             <div class="login-error"><i class="fa-solid fa-triangle-exclamation"></i> <?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8') ?></div>
         <?php endif; ?>

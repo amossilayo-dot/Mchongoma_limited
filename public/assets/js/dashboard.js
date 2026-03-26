@@ -1850,15 +1850,6 @@ function initSalesPage() {
         showNewSaleModal();
     });
 
-    const initialCards = productsGrid.querySelectorAll('.sales-product-card');
-    initialCards.forEach((card, index) => {
-        if (index > 2) {
-            return;
-        }
-        const product = getCardModel(card);
-        addProduct(product.id, product.name, product.price);
-    });
-
     renderCart();
 }
 

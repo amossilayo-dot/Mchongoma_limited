@@ -71,6 +71,10 @@ function authenticateUser(string $login, string $password): array
     try {
         $pdo = getDatabaseConnection();
     } catch (Throwable $exception) {
+        if (!isProductionEnvironment() && isDemoLoginEnabled()) {
+            return authenticateDemoFallbackUser($login, $password);
+        }
+
         return ['ok' => false, 'message' => 'Database is unavailable. Please try again in a moment.'];
     }
 
@@ -103,6 +107,37 @@ function authenticateUser(string $login, string $password): array
     ];
 
     return ['ok' => true, 'message' => null];
+}
+
+function authenticateDemoFallbackUser(string $login, string $password): array
+{
+    $normalizedLogin = strtolower(trim($login));
+    $allowedLogins = ['admin', 'admin@mchongoma.com'];
+    $expectedPassword = (string) (getenv('DEMO_ADMIN_PASSWORD') ?: 'admin123');
+
+    if (!in_array($normalizedLogin, $allowedLogins, true) || !hash_equals($expectedPassword, $password)) {
+        return [
+            'ok' => false,
+            'message' => 'Database is unavailable. For offline demo login use admin / admin123.',
+        ];
+    }
+
+    session_regenerate_id(true);
+    $_SESSION['user'] = [
+        'id' => 0,
+        'name' => 'Admin User',
+        'email' => 'admin@mchongoma.com',
+        'role' => 'admin',
+        'is_demo' => true,
+    ];
+
+    return ['ok' => true, 'message' => null];
+}
+
+function isDemoLoginEnabled(): bool
+{
+    $raw = strtolower(trim((string) (getenv('APP_ALLOW_DEMO_LOGIN') ?: '0')));
+    return in_array($raw, ['1', 'true', 'yes', 'on'], true);
 }
 
 function logoutUser(): void

@@ -42,6 +42,7 @@ $currentPage = $pageController->getCurrentPage();
 $authUser = currentUser();
 $userName = (string) ($authUser['name'] ?? 'User');
 $userRole = (string) ($authUser['role'] ?? 'Staff');
+$isDemoSession = (bool) ($authUser['is_demo'] ?? false);
 $letters = preg_replace('/[^A-Za-z]/', '', $userName);
 $userInitials = strtoupper(substr($letters !== null && $letters !== '' ? $letters : 'US', 0, 2));
 $flashFeedback = $_SESSION['flash_feedback'] ?? null;
@@ -219,9 +220,13 @@ try {
 } catch (Throwable $exception) {
     $usingDemoData = true;
     error_log('[POS Dashboard] ' . $exception->getMessage());
-    $errorMessage = isDebugMode()
-        ? $exception->getMessage()
-        : 'Database is unavailable. Showing demo data until connection is restored.';
+    if ($isDemoSession) {
+        $errorMessage = 'Offline demo mode is active. Data changes are temporary until database connection is restored.';
+    } else {
+        $errorMessage = isDebugMode()
+            ? $exception->getMessage()
+            : 'Database is unavailable. Showing demo data until connection is restored.';
+    }
 
     if (isInventoryImportRequest()) {
         $importFeedback = [
@@ -1437,41 +1442,43 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
         <?php endif; ?>
 
         <?php if ($usingDemoData): ?>
-            <section class="db-warning">
-                <i class="fa-solid fa-triangle-exclamation"></i>
-                MySQL is not connected, showing demo data. Configure DB credentials in your environment and import sql/schema.sql.
-                <?php if ($errorMessage): ?>
-                    <div class="hint">Error: <?= e($errorMessage) ?></div>
-                <?php endif; ?>
-            </section>
+            <?php if (!$isDemoSession): ?>
+                <section class="db-warning">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    MySQL is not connected, showing demo data. Configure DB credentials in your environment and import sql/schema.sql.
+                    <?php if ($errorMessage): ?>
+                        <div class="hint">Error: <?= e($errorMessage) ?></div>
+                    <?php endif; ?>
+                </section>
 
-            <section class="setup-check" aria-label="Setup checks">
-                <div class="setup-check-title">Setup Check</div>
-                <div class="setup-check-grid">
-                    <div class="setup-item">
-                        <span class="label">PDO MySQL Driver</span>
-                        <span class="value <?= $setupStatus['pdoMysql'] ? 'ok' : 'bad' ?>">
-                            <i class="fa-solid <?= $setupStatus['pdoMysql'] ? 'fa-circle-check' : 'fa-circle-xmark' ?>"></i>
-                            <?= $setupStatus['pdoMysql'] ? 'Loaded' : 'Missing' ?>
-                        </span>
+                <section class="setup-check" aria-label="Setup checks">
+                    <div class="setup-check-title">Setup Check</div>
+                    <div class="setup-check-grid">
+                        <div class="setup-item">
+                            <span class="label">PDO MySQL Driver</span>
+                            <span class="value <?= $setupStatus['pdoMysql'] ? 'ok' : 'bad' ?>">
+                                <i class="fa-solid <?= $setupStatus['pdoMysql'] ? 'fa-circle-check' : 'fa-circle-xmark' ?>"></i>
+                                <?= $setupStatus['pdoMysql'] ? 'Loaded' : 'Missing' ?>
+                            </span>
+                        </div>
+                        <div class="setup-item">
+                            <span class="label">MySQL Connection</span>
+                            <span class="value <?= $setupStatus['dbConnected'] ? 'ok' : 'bad' ?>">
+                                <i class="fa-solid <?= $setupStatus['dbConnected'] ? 'fa-circle-check' : 'fa-circle-xmark' ?>"></i>
+                                <?= $setupStatus['dbConnected'] ? 'Connected' : 'Failed' ?>
+                            </span>
+                        </div>
+                        <div class="setup-item">
+                            <span class="label">Core Tables</span>
+                            <span class="value <?= $setupStatus['schemaReady'] ? 'ok' : 'bad' ?>">
+                                <i class="fa-solid <?= $setupStatus['schemaReady'] ? 'fa-circle-check' : 'fa-circle-xmark' ?>"></i>
+                                <?= $setupStatus['schemaReady'] ? 'Ready' : 'Missing' ?>
+                            </span>
+                        </div>
                     </div>
-                    <div class="setup-item">
-                        <span class="label">MySQL Connection</span>
-                        <span class="value <?= $setupStatus['dbConnected'] ? 'ok' : 'bad' ?>">
-                            <i class="fa-solid <?= $setupStatus['dbConnected'] ? 'fa-circle-check' : 'fa-circle-xmark' ?>"></i>
-                            <?= $setupStatus['dbConnected'] ? 'Connected' : 'Failed' ?>
-                        </span>
-                    </div>
-                    <div class="setup-item">
-                        <span class="label">Core Tables</span>
-                        <span class="value <?= $setupStatus['schemaReady'] ? 'ok' : 'bad' ?>">
-                            <i class="fa-solid <?= $setupStatus['schemaReady'] ? 'fa-circle-check' : 'fa-circle-xmark' ?>"></i>
-                            <?= $setupStatus['schemaReady'] ? 'Ready' : 'Missing' ?>
-                        </span>
-                    </div>
-                </div>
-                <p class="setup-note">If any item shows Missing/Failed, enable pdo_mysql in php.ini, restart Apache, start MySQL, and import sql/schema.sql.</p>
-            </section>
+                    <p class="setup-note">If any item shows Missing/Failed, enable pdo_mysql in php.ini, restart Apache, start MySQL, and import sql/schema.sql.</p>
+                </section>
+            <?php endif; ?>
         <?php endif; ?>
 
         <?php if (is_array($flashFeedback) && isset($flashFeedback['type'], $flashFeedback['message'])): ?>
