@@ -2225,6 +2225,244 @@ body {
     box-shadow: 0 0 0 3px var(--primary-bg);
 }
 
+.modal.modal-checkout {
+    max-width: 500px;
+}
+
+.modal.modal-checkout .modal-footer {
+    display: none;
+}
+
+.modal.modal-checkout .modal-body {
+    padding: 12px 18px 16px;
+}
+
+.modal.modal-checkout .modal-header {
+    padding: 12px 18px;
+}
+
+.modal.modal-checkout .modal-header h3 {
+    font-size: 32px;
+    font-weight: 700;
+}
+
+.sales-checkout-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.sales-checkout-items {
+    max-height: 170px;
+    overflow-y: auto;
+    border: 1px solid #E5E7EB;
+    border-radius: 10px;
+    padding: 10px;
+    background: #F8FAFC;
+}
+
+.sales-checkout-line {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 6px 0;
+    border-bottom: 1px dashed #E5E7EB;
+    font-size: 14px;
+}
+
+.sales-checkout-line:last-child {
+    border-bottom: none;
+}
+
+.sales-checkout-summary {
+    border: 1px solid #E5E7EB;
+    border-radius: 10px;
+    padding: 10px;
+    background: #FFFFFF;
+}
+
+.sales-checkout-summary div {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 4px;
+    font-size: 14px;
+    color: #4B5563;
+}
+
+.sales-checkout-summary .total {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #E5E7EB;
+    font-weight: 700;
+    color: #111827;
+}
+
+.sales-checkout-summary .total strong {
+    color: #0F9A73;
+    font-size: 30px;
+}
+
+.sales-checkout-payment-title {
+    margin: 4px 0 0 0;
+    font-size: 14px;
+    color: #1F2937;
+}
+
+.sales-payment-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.sales-payment-tile {
+    min-height: 62px;
+    border: 1px solid #D1D5DB;
+    border-radius: 10px;
+    background: #FFFFFF;
+    color: #374151;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-base);
+}
+
+.sales-payment-tile i {
+    font-size: 14px;
+}
+
+.sales-payment-tile.active {
+    border-color: #0F9A73;
+    color: #0F9A73;
+    background: #ECFDF5;
+}
+
+.sales-checkout-submit {
+    width: 100%;
+    border: none;
+    border-radius: 8px;
+    background: #0F9A73;
+    color: #FFFFFF;
+    height: 48px;
+    font-size: 18px;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: 4px;
+}
+
+.sales-checkout-submit:disabled {
+    opacity: 0.7;
+    cursor: wait;
+}
+
+.modal.modal-receipt {
+    max-width: 500px;
+}
+
+.modal.modal-receipt .modal-body {
+    background: #F9FAFB;
+}
+
+.sales-receipt-sheet {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 12px;
+    padding: 14px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+}
+
+.sales-receipt-brand {
+    text-align: center;
+    font-size: 40px;
+    font-weight: 800;
+    color: #1F2937;
+    margin-bottom: 4px;
+}
+
+.sales-receipt-subtitle,
+.sales-receipt-time {
+    text-align: center;
+    color: #6B7280;
+    font-size: 12px;
+}
+
+.sales-receipt-subtitle {
+    margin-top: -2px;
+}
+
+.sales-receipt-meta {
+    margin-top: 12px;
+    border-top: 1px dashed #D1D5DB;
+    border-bottom: 1px dashed #D1D5DB;
+    padding: 8px 0;
+}
+
+.sales-receipt-meta div,
+.sales-receipt-line,
+.sales-receipt-totals div {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 13px;
+}
+
+.sales-receipt-meta div:last-child,
+.sales-receipt-totals div:last-child {
+    margin-bottom: 0;
+}
+
+.sales-receipt-items {
+    margin-top: 10px;
+}
+
+.sales-receipt-totals {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px dashed #D1D5DB;
+}
+
+.sales-receipt-total {
+    font-size: 18px;
+    font-weight: 800;
+}
+
+.sales-receipt-thanks {
+    text-align: center;
+    margin: 14px 0 0;
+    color: #6B7280;
+    font-size: 12px;
+}
+
+@media (max-width: 640px) {
+    .modal.modal-checkout,
+    .modal.modal-receipt {
+        width: calc(100vw - 20px);
+        max-width: none;
+    }
+
+    .modal.modal-checkout .modal-header h3 {
+        font-size: 26px;
+    }
+
+    .sales-payment-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .sales-checkout-summary .total strong {
+        font-size: 24px;
+    }
+
+    .sales-receipt-brand {
+        font-size: 32px;
+    }
+}
+
 /* ============================================
    NOTIFICATIONS
    ============================================ */

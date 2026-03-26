@@ -770,12 +770,17 @@ function initActionBindings() {
 // MODAL SYSTEM
 // ============================================
 
-function openModal(title, content, buttons = []) {
+function openModal(title, content, buttons = [], options = {}) {
     const overlay = document.getElementById('modalOverlay');
     const modal = document.getElementById('modal');
     const modalTitle = document.getElementById('modalTitle');
     const modalBody = document.getElementById('modalBody');
     const modalFooter = document.getElementById('modalFooter');
+
+    modal.classList.remove('modal-checkout', 'modal-receipt');
+    if (typeof options.modalClass === 'string' && options.modalClass.trim() !== '') {
+        modal.classList.add(options.modalClass.trim());
+    }
 
     modalTitle.textContent = title;
     modalBody.innerHTML = content;
@@ -1712,6 +1717,18 @@ function initSalesPage() {
     }
 
     const cart = new Map();
+    const customers = Array.isArray(APP_CONFIG.saleCustomers) ? APP_CONFIG.saleCustomers : [];
+    const paymentOptionsRaw = Array.isArray(APP_CONFIG.checkoutPaymentOptions) ? APP_CONFIG.checkoutPaymentOptions : [];
+    const paymentOptions = paymentOptionsRaw.length > 0
+        ? paymentOptionsRaw
+        : [
+            { key: 'cash', label: 'Cash', type: 'cash' },
+            { key: 'card', label: 'Card', type: 'card' },
+            { key: 'bank_transfer', label: 'Bank Transfer', type: 'bank' },
+            { key: 'mpesa', label: 'M-Pesa', type: 'mobile', provider: 'mpesa' },
+            { key: 'airtel_money', label: 'Airtel Money', type: 'mobile', provider: 'airtel_money' },
+            { key: 'tigo_pesa', label: 'Tigo Pesa', type: 'mobile', provider: 'tigo_pesa' },
+        ];
 
     const toNumber = (value) => {
         const parsed = Number.parseFloat((value || '').toString());
@@ -1719,6 +1736,264 @@ function initSalesPage() {
     };
 
     const formatTsh = (value) => `Tsh ${Math.round(value)}`;
+
+    const formatMoney = (value) => Math.round(value).toLocaleString('en-US');
+
+    const toPaymentMethodValue = (gatewayKey) => {
+        switch ((gatewayKey || '').toLowerCase()) {
+            case 'card':
+                return 'Card';
+            case 'bank_transfer':
+                return 'Bank Transfer';
+            case 'mpesa':
+            case 'airtel_money':
+            case 'tigo_pesa':
+                return 'Mobile Money';
+            case 'cash':
+            default:
+                return 'Cash';
+        }
+    };
+
+    const openReceiptModal = (receipt) => {
+        if (!receipt || typeof receipt !== 'object') {
+            return;
+        }
+
+        const txNo = escapeHtml(receipt.transaction_no || 'N/A');
+        const customer = escapeHtml(receipt.customer_name || 'Walk-in Customer');
+        const cashier = escapeHtml(receipt.cashier_name || 'Cashier');
+        const paymentMethod = escapeHtml(receipt.payment_method || 'Cash');
+        const createdAt = escapeHtml(receipt.created_at || '');
+        const subtotal = formatMoney(Number(receipt.subtotal || 0));
+        const tax = formatMoney(Number(receipt.tax || 0));
+        const total = formatMoney(Number(receipt.total || 0));
+        const items = Array.isArray(receipt.items) ? receipt.items : [];
+
+        const itemsHtml = items.map(item => {
+            const name = escapeHtml(item.name || 'Item');
+            const qty = Number(item.quantity || 0);
+            const lineTotal = formatMoney(Number(item.line_total || 0));
+            return `<div class="sales-receipt-line"><span>${name} x ${qty}</span><strong>Tsh ${lineTotal}</strong></div>`;
+        }).join('');
+
+        const content = `
+            <div class="sales-receipt-sheet" id="salesReceiptSheet">
+                <div class="sales-receipt-brand">Mchongoma Limited</div>
+                <div class="sales-receipt-subtitle">Thank you for your purchase!</div>
+                <div class="sales-receipt-time">${createdAt}</div>
+                <div class="sales-receipt-meta">
+                    <div><span>Receipt #</span><strong>${txNo}</strong></div>
+                    <div><span>Customer</span><strong>${customer}</strong></div>
+                    <div><span>Cashier</span><strong>${cashier}</strong></div>
+                </div>
+                <div class="sales-receipt-items">${itemsHtml}</div>
+                <div class="sales-receipt-totals">
+                    <div><span>Subtotal</span><strong>Tsh ${subtotal}</strong></div>
+                    <div><span>Tax</span><strong>Tsh ${tax}</strong></div>
+                    <div class="sales-receipt-total"><span>TOTAL</span><strong>Tsh ${total}</strong></div>
+                    <div><span>Paid via</span><strong>${paymentMethod}</strong></div>
+                </div>
+                <p class="sales-receipt-thanks">*** Thank you, come again! ***</p>
+            </div>
+        `;
+
+        const printReceiptFromData = () => {
+            const sheet = document.getElementById('salesReceiptSheet');
+            if (!sheet) {
+                return;
+            }
+
+            const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=420,height=700');
+            if (!printWindow) {
+                showToast('warning', 'Pop-up blocked. Enable pop-ups to print receipt.');
+                return;
+            }
+
+            printWindow.document.write(`
+                <html>
+                    <head>
+                        <title>Receipt ${txNo}</title>
+                        <style>
+                            body{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; padding:16px; color:#111;}
+                            .sales-receipt-sheet{max-width:360px; margin:0 auto;}
+                            .sales-receipt-brand{text-align:center; font-size:28px; font-weight:700; margin-bottom:4px;}
+                            .sales-receipt-subtitle,.sales-receipt-time{text-align:center; color:#555; font-size:12px;}
+                            .sales-receipt-meta,.sales-receipt-totals{margin-top:14px; border-top:1px dashed #bbb; padding-top:10px;}
+                            .sales-receipt-meta div,.sales-receipt-line,.sales-receipt-totals div{display:flex; justify-content:space-between; margin-bottom:8px; font-size:13px;}
+                            .sales-receipt-items{margin-top:10px;}
+                            .sales-receipt-total{font-weight:700; font-size:16px;}
+                            .sales-receipt-thanks{text-align:center; margin-top:14px; font-size:12px;}
+                        </style>
+                    </head>
+                    <body>${sheet.outerHTML}</body>
+                </html>
+            `);
+            printWindow.document.close();
+            printWindow.focus();
+            printWindow.print();
+        };
+
+        openModal('Receipt', content, [
+            { text: 'New Sale', class: 'btn-secondary', handler: closeModal },
+            { text: 'Print', class: 'btn-primary', handler: printReceiptFromData },
+        ], { modalClass: 'modal-receipt' });
+    };
+
+    const openCheckoutModal = () => {
+        const cartItems = Array.from(cart.values());
+        if (cartItems.length === 0) {
+            showToast('warning', 'Add at least one product to continue.');
+            return;
+        }
+
+        const customerOptions = customers.length > 0
+            ? customers.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name || '')}</option>`).join('')
+            : '<option value="1">Walk-in Customer</option>';
+
+        const paymentIconFor = (option) => {
+            const key = (option?.key || '').toLowerCase();
+            const type = (option?.type || '').toLowerCase();
+            if (type === 'mobile') return 'fa-mobile-screen-button';
+            if (key === 'card') return 'fa-credit-card';
+            if (key === 'bank_transfer') return 'fa-building-columns';
+            return 'fa-money-bill-wave';
+        };
+
+        const optionTiles = paymentOptions.map((option, index) => `
+            <button type="button" class="sales-payment-tile ${index === 0 ? 'active' : ''}" data-gateway="${escapeHtml(option.key || '')}">
+                <i class="fa-solid ${paymentIconFor(option)}"></i>
+                <span>${escapeHtml(option.label || '')}</span>
+            </button>
+        `).join('');
+
+        const cartLines = cartItems.map(item => {
+            const lineTotal = item.qty * item.price;
+            return `<div class="sales-checkout-line"><span>${escapeHtml(item.name)} x ${item.qty}</span><strong>Tsh ${formatMoney(lineTotal)}</strong></div>`;
+        }).join('');
+
+        const subtotal = cartItems.reduce((sum, item) => sum + (item.qty * item.price), 0);
+        const defaultGateway = (paymentOptions[0]?.key || 'cash').toLowerCase();
+
+        const content = `
+            <form id="salesCheckoutForm" method="POST" action="?page=sales" class="sales-checkout-form">
+                <input type="hidden" name="action" value="create_entity">
+                <input type="hidden" name="entity" value="sale">
+                <input type="hidden" name="csrf_token" value="${escapeHtml(APP_CONFIG.csrfToken || '')}">
+                <input type="hidden" name="payment_gateway" id="checkoutGateway" value="${escapeHtml(defaultGateway)}">
+                <input type="hidden" name="payment_method" id="checkoutPaymentMethod" value="${escapeHtml(toPaymentMethodValue(defaultGateway))}">
+                <input type="hidden" name="mobile_money_provider" id="checkoutMobileProvider" value="${['mpesa', 'airtel_money', 'tigo_pesa'].includes(defaultGateway) ? escapeHtml(defaultGateway) : ''}">
+                <input type="hidden" name="cart_json" id="checkoutCartJson">
+                <input type="hidden" name="amount" id="checkoutAmountInput" value="${Math.round(subtotal)}">
+
+                <div class="form-group">
+                    <label><i class="fa-regular fa-circle-user"></i> Customer</label>
+                    <select name="customer_id" required>${customerOptions}</select>
+                </div>
+
+                <div class="sales-checkout-items" id="checkoutItemsWrap">${cartLines}</div>
+
+                <div class="form-group">
+                    <label>Discount (Tsh)</label>
+                    <input type="number" name="discount_amount" id="checkoutDiscount" min="0" value="0">
+                </div>
+
+                <div class="sales-checkout-summary">
+                    <div><span>Subtotal</span><strong id="checkoutSubtotal">Tsh ${formatMoney(subtotal)}</strong></div>
+                    <div><span>Tax</span><strong>Tsh 0</strong></div>
+                    <div class="total"><span>Total</span><strong id="checkoutTotal">Tsh ${formatMoney(subtotal)}</strong></div>
+                </div>
+
+                <h4 class="sales-checkout-payment-title">Payment Method</h4>
+                <div class="sales-payment-grid" id="checkoutPaymentGrid">${optionTiles}</div>
+
+                <div class="form-group" id="checkoutMobilePhoneGroup" style="display:${['mpesa', 'airtel_money', 'tigo_pesa'].includes(defaultGateway) ? 'block' : 'none'};">
+                    <label>Mobile Number</label>
+                    <input type="tel" name="mobile_money_phone" id="checkoutMobilePhone" placeholder="07XXXXXXXX or 2557XXXXXXXX">
+                </div>
+
+                <div class="form-group" id="checkoutMobileRefGroup" style="display:${['mpesa', 'airtel_money', 'tigo_pesa'].includes(defaultGateway) ? 'block' : 'none'};">
+                    <label>Payment Reference (Optional)</label>
+                    <input type="text" name="mobile_money_reference" placeholder="Invoice number or note">
+                </div>
+
+                <button type="submit" class="sales-checkout-submit" id="checkoutSubmitBtn">Complete Payment</button>
+            </form>
+        `;
+
+        openModal('Checkout', content, [], { modalClass: 'modal-checkout' });
+
+        const form = document.getElementById('salesCheckoutForm');
+        const gatewayInput = document.getElementById('checkoutGateway');
+        const methodInput = document.getElementById('checkoutPaymentMethod');
+        const providerInput = document.getElementById('checkoutMobileProvider');
+        const cartJsonInput = document.getElementById('checkoutCartJson');
+        const amountInput = document.getElementById('checkoutAmountInput');
+        const discountInput = document.getElementById('checkoutDiscount');
+        const subtotalElModal = document.getElementById('checkoutSubtotal');
+        const totalElModal = document.getElementById('checkoutTotal');
+        const paymentGrid = document.getElementById('checkoutPaymentGrid');
+        const mobilePhoneGroup = document.getElementById('checkoutMobilePhoneGroup');
+        const mobileRefGroup = document.getElementById('checkoutMobileRefGroup');
+        const mobilePhoneInput = document.getElementById('checkoutMobilePhone');
+        const submitBtn = document.getElementById('checkoutSubmitBtn');
+
+        const toCartPayload = () => cartItems.map(item => ({ product_id: Number(item.id), quantity: item.qty }));
+
+        const recalcCheckoutTotals = () => {
+            const discount = Math.max(0, Number.parseFloat(discountInput?.value || '0') || 0);
+            const safeDiscount = Math.min(discount, subtotal);
+            if (discountInput && discount !== safeDiscount) {
+                discountInput.value = String(Math.round(safeDiscount));
+            }
+
+            const total = Math.max(0, subtotal - safeDiscount);
+            if (subtotalElModal) subtotalElModal.textContent = `Tsh ${formatMoney(subtotal)}`;
+            if (totalElModal) totalElModal.textContent = `Tsh ${formatMoney(total)}`;
+            if (amountInput) amountInput.value = String(Math.round(total));
+            if (submitBtn) submitBtn.textContent = `Complete Payment`;
+        };
+
+        const setGateway = (gateway) => {
+            const key = (gateway || 'cash').toLowerCase();
+            const isMobile = ['mpesa', 'airtel_money', 'tigo_pesa'].includes(key);
+
+            if (gatewayInput) gatewayInput.value = key;
+            if (methodInput) methodInput.value = toPaymentMethodValue(key);
+            if (providerInput) providerInput.value = isMobile ? key : '';
+            if (mobilePhoneGroup) mobilePhoneGroup.style.display = isMobile ? 'block' : 'none';
+            if (mobileRefGroup) mobileRefGroup.style.display = isMobile ? 'block' : 'none';
+            if (mobilePhoneInput) mobilePhoneInput.required = isMobile;
+
+            paymentGrid?.querySelectorAll('.sales-payment-tile').forEach(tile => {
+                tile.classList.toggle('active', (tile.getAttribute('data-gateway') || '').toLowerCase() === key);
+            });
+        };
+
+        if (cartJsonInput) {
+            cartJsonInput.value = JSON.stringify(toCartPayload());
+        }
+
+        paymentGrid?.addEventListener('click', (event) => {
+            const tile = event.target.closest('.sales-payment-tile');
+            if (!tile) {
+                return;
+            }
+            setGateway(tile.getAttribute('data-gateway') || 'cash');
+        });
+
+        discountInput?.addEventListener('input', recalcCheckoutTotals);
+
+        form?.addEventListener('submit', () => {
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Processing...';
+            }
+        });
+
+        setGateway(defaultGateway);
+        recalcCheckoutTotals();
+    };
 
     const addProduct = (id, name, price) => {
         if (!id || !name) {
@@ -1841,16 +2116,13 @@ function initSalesPage() {
         renderCart();
     });
 
-    chargeBtn.addEventListener('click', function() {
-        if (cart.size === 0) {
-            showToast('warning', 'Add at least one product to continue.');
-            return;
-        }
-
-        showNewSaleModal();
-    });
+    chargeBtn.addEventListener('click', openCheckoutModal);
 
     renderCart();
+
+    if (APP_CONFIG.flashReceipt && typeof APP_CONFIG.flashReceipt === 'object') {
+        openReceiptModal(APP_CONFIG.flashReceipt);
+    }
 }
 
 function filterTable(tableId, searchTerm) {

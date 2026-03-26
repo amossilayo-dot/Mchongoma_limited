@@ -46,7 +46,9 @@ $isDemoSession = (bool) ($authUser['is_demo'] ?? false);
 $letters = preg_replace('/[^A-Za-z]/', '', $userName);
 $userInitials = strtoupper(substr($letters !== null && $letters !== '' ? $letters : 'US', 0, 2));
 $flashFeedback = $_SESSION['flash_feedback'] ?? null;
+$flashReceipt = $_SESSION['flash_receipt'] ?? null;
 unset($_SESSION['flash_feedback']);
+unset($_SESSION['flash_receipt']);
 
 $accessDeniedMessage = null;
 if (!canAccessPage($currentPage, $userRole)) {
@@ -596,6 +598,52 @@ function getConfiguredDenominations(array $storeSettings): array
     return count($list) > 0 ? $list : $default;
 }
 
+function getAvailableCheckoutPaymentOptions(array $storeSettings): array
+{
+    $options = [
+        ['key' => 'cash', 'label' => 'Cash', 'type' => 'cash'],
+        ['key' => 'card', 'label' => 'Card', 'type' => 'card'],
+        ['key' => 'bank_transfer', 'label' => 'Bank Transfer', 'type' => 'bank'],
+    ];
+
+    $mobileMode = strtolower(trim((string) ($storeSettings['mobile_money_mode'] ?? 'mock')));
+    $supportsAllMobileInMock = $mobileMode !== 'live';
+
+    $providers = [
+        'mpesa' => [
+            'label' => 'M-Pesa',
+            'url' => trim((string) ($storeSettings['mobile_money_mpesa_url'] ?? '')),
+            'token' => trim((string) ($storeSettings['mobile_money_mpesa_token'] ?? '')),
+        ],
+        'airtel_money' => [
+            'label' => 'Airtel Money',
+            'url' => trim((string) ($storeSettings['mobile_money_airtel_url'] ?? '')),
+            'token' => trim((string) ($storeSettings['mobile_money_airtel_token'] ?? '')),
+        ],
+        'tigo_pesa' => [
+            'label' => 'Tigo Pesa',
+            'url' => trim((string) ($storeSettings['mobile_money_tigo_url'] ?? '')),
+            'token' => trim((string) ($storeSettings['mobile_money_tigo_token'] ?? '')),
+        ],
+    ];
+
+    foreach ($providers as $key => $provider) {
+        $isAvailable = $supportsAllMobileInMock || ($provider['url'] !== '' && $provider['token'] !== '');
+        if (!$isAvailable) {
+            continue;
+        }
+
+        $options[] = [
+            'key' => $key,
+            'label' => $provider['label'],
+            'type' => 'mobile',
+            'provider' => $key,
+        ];
+    }
+
+    return $options;
+}
+
 function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): array
 {
     if (!hasValidCsrfToken()) {
@@ -610,41 +658,120 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): ar
     try {
         switch ($entity) {
             case 'sale':
-                $paymentMethod = (string) ($_POST['payment_method'] ?? 'Cash');
+                $selectedGateway = strtolower(trim((string) ($_POST['payment_gateway'] ?? 'cash')));
+                $paymentMethod = (string) ($_POST['payment_method'] ?? '');
                 $customerId = (int) ($_POST['customer_id'] ?? 0);
                 $productId = (int) ($_POST['product_id'] ?? 0);
                 $quantity = (int) ($_POST['quantity'] ?? 0);
                 $amount = (float) ($_POST['amount'] ?? 0);
+                $discountAmount = max(0, (float) ($_POST['discount_amount'] ?? 0));
+
+                $gatewayToPaymentMethod = [
+                    'cash' => 'Cash',
+                    'card' => 'Card',
+                    'bank_transfer' => 'Bank Transfer',
+                    'mpesa' => 'Mobile Money',
+                    'airtel_money' => 'Mobile Money',
+                    'tigo_pesa' => 'Mobile Money',
+                ];
+
+                if ($paymentMethod === '' && isset($gatewayToPaymentMethod[$selectedGateway])) {
+                    $paymentMethod = $gatewayToPaymentMethod[$selectedGateway];
+                }
+
+                if ($paymentMethod === '') {
+                    $paymentMethod = 'Cash';
+                }
+
+                $mobileProvider = (string) ($_POST['mobile_money_provider'] ?? '');
+                if ($paymentMethod === 'Mobile Money' && $mobileProvider === '' && isset($gatewayToPaymentMethod[$selectedGateway])) {
+                    $mobileProvider = $selectedGateway;
+                }
+
+                $cartItemsInput = [];
+                $cartJson = trim((string) ($_POST['cart_json'] ?? ''));
+                if ($cartJson !== '') {
+                    $decoded = json_decode($cartJson, true);
+                    if (!is_array($decoded)) {
+                        throw new RuntimeException('Invalid checkout cart payload.');
+                    }
+
+                    foreach ($decoded as $row) {
+                        if (!is_array($row)) {
+                            continue;
+                        }
+
+                        $rowProductId = (int) ($row['product_id'] ?? 0);
+                        $rowQuantity = (int) ($row['quantity'] ?? 0);
+                        if ($rowProductId > 0 && $rowQuantity > 0) {
+                            $cartItemsInput[] = [
+                                'product_id' => $rowProductId,
+                                'quantity' => $rowQuantity,
+                            ];
+                        }
+                    }
+                }
+
+                if (count($cartItemsInput) === 0 && $productId > 0 && $quantity > 0) {
+                    $cartItemsInput[] = [
+                        'product_id' => $productId,
+                        'quantity' => $quantity,
+                    ];
+                }
 
                 if ($customerId <= 0) {
                     throw new RuntimeException('Customer is required for a sale.');
                 }
-                if ($productId <= 0) {
-                    throw new RuntimeException('Product is required for a sale.');
-                }
-                if ($quantity <= 0) {
-                    throw new RuntimeException('Quantity must be greater than zero.');
+                if (count($cartItemsInput) === 0) {
+                    throw new RuntimeException('Select at least one product for checkout.');
                 }
 
                 $mobileResult = null;
+                $receiptItems = [];
+                $subtotalAmount = 0.0;
+                $paymentLabel = $paymentMethod;
 
                 $pdo->beginTransaction();
                 try {
                     $inventoryRepo = new InventoryRepository($pdo);
-                    $product = $inventoryRepo->getProduct($productId);
-                    if (!is_array($product)) {
-                        throw new RuntimeException('Selected product was not found.');
+
+                    foreach ($cartItemsInput as $item) {
+                        $lineProductId = (int) $item['product_id'];
+                        $lineQuantity = (int) $item['quantity'];
+
+                        $product = $inventoryRepo->getProduct($lineProductId);
+                        if (!is_array($product)) {
+                            throw new RuntimeException('One or more selected products were not found.');
+                        }
+
+                        $unitPrice = (float) ($product['unit_price'] ?? 0);
+                        $lineTotal = $unitPrice * $lineQuantity;
+
+                        $receiptItems[] = [
+                            'product_id' => $lineProductId,
+                            'name' => (string) ($product['name'] ?? 'Product'),
+                            'quantity' => $lineQuantity,
+                            'unit_price' => $unitPrice,
+                            'line_total' => $lineTotal,
+                        ];
+
+                        $subtotalAmount += $lineTotal;
                     }
 
-                    $derivedAmount = (float) ($product['unit_price'] ?? 0) * $quantity;
-                    if ($derivedAmount > 0) {
-                        $amount = $derivedAmount;
+                    if ($subtotalAmount <= 0) {
+                        throw new RuntimeException('Checkout total must be greater than zero.');
                     }
+
+                    if ($discountAmount > $subtotalAmount) {
+                        $discountAmount = $subtotalAmount;
+                    }
+
+                    $amount = $subtotalAmount - $discountAmount;
 
                     if ($paymentMethod === 'Mobile Money') {
                         $gateway = new MobileMoneyGateway($pdo);
                         $mobileResult = $gateway->initiate([
-                            'provider' => (string) ($_POST['mobile_money_provider'] ?? ''),
+                            'provider' => $mobileProvider,
                             'phone' => (string) ($_POST['mobile_money_phone'] ?? ''),
                             'amount' => $amount,
                             'currency' => 'TZS',
@@ -654,15 +781,22 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): ar
                         if (!($mobileResult['success'] ?? false)) {
                             throw new RuntimeException((string) ($mobileResult['message'] ?? 'Mobile money payment failed.'));
                         }
+
+                        $paymentLabel = (string) ($mobileResult['provider_label'] ?? 'Mobile Money');
                     }
 
-                    $inventoryRepo->deductStock($productId, $quantity);
+                    foreach ($receiptItems as $item) {
+                        $inventoryRepo->deductStock((int) $item['product_id'], (int) $item['quantity']);
+                    }
 
-                    $saleId = (new SalesRepository($pdo))->createSale([
+                    $salesRepo = new SalesRepository($pdo);
+                    $saleId = $salesRepo->createSale([
                         'customer_id' => $customerId,
                         'amount' => $amount,
                         'payment_method' => $paymentMethod,
                     ]);
+
+                    $createdSale = $salesRepo->getSale($saleId);
 
                     if (
                         is_array($mobileResult)
@@ -672,6 +806,23 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): ar
                         $gateway->attachSaleId((int) $mobileResult['transaction_id'], $saleId);
                     }
 
+                    $_SESSION['flash_receipt'] = [
+                        'transaction_no' => (string) ($createdSale['transaction_no'] ?? ''),
+                        'customer_name' => (string) ($createdSale['customer_name'] ?? 'Walk-in Customer'),
+                        'cashier_name' => $userName,
+                        'created_at' => (string) ($createdSale['created_at'] ?? date('Y-m-d H:i:s')),
+                        'items' => array_map(static fn(array $line): array => [
+                            'name' => (string) ($line['name'] ?? ''),
+                            'quantity' => (int) ($line['quantity'] ?? 0),
+                            'line_total' => (float) ($line['line_total'] ?? 0),
+                        ], $receiptItems),
+                        'subtotal' => $subtotalAmount,
+                        'tax' => 0,
+                        'discount' => $discountAmount,
+                        'total' => $amount,
+                        'payment_method' => $paymentLabel,
+                    ];
+
                     $pdo->commit();
                 } catch (Throwable $exception) {
                     if ($pdo->inTransaction()) {
@@ -680,7 +831,13 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): ar
                     throw $exception;
                 }
 
-                $message = 'Sale created successfully. Stock deducted for quantity ' . $quantity . '.';
+                $totalQty = array_reduce(
+                    $receiptItems,
+                    static fn(int $carry, array $line): int => $carry + (int) ($line['quantity'] ?? 0),
+                    0
+                );
+
+                $message = 'Sale created successfully. Stock deducted for ' . count($receiptItems) . ' items (qty ' . $totalQty . ').';
                 if (is_array($mobileResult)) {
                     $message .= ' ' . (string) ($mobileResult['message'] ?? '');
                     if (!empty($mobileResult['external_reference'])) {
@@ -2606,6 +2763,8 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
     'csrfToken' => getCsrfToken(),
     'saleCustomers' => $saleCustomerOptions,
     'saleProducts' => $saleProductOptions,
+    'checkoutPaymentOptions' => getAvailableCheckoutPaymentOptions($storeSettings),
+    'flashReceipt' => is_array($flashReceipt) ? $flashReceipt : null,
     'inventoryProducts' => array_map(static fn(array $item) => [
         'id' => (int) ($item['id'] ?? 0),
         'name' => (string) ($item['name'] ?? ''),
