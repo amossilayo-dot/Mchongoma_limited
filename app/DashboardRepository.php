@@ -29,7 +29,7 @@ final class DashboardRepository
             'totalCustomers' => $totalCustomers,
             'totalProducts' => $totalProducts,
             'totalStockUnits' => $totalStockUnits,
-            'totalItems' => $totalStockUnits,
+            'totalItems' => $totalProducts,
             'transactionsToday' => $transactionsToday,
         ];
     }

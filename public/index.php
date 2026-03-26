@@ -38,6 +38,7 @@ require_once __DIR__ . '/../app/MessagesRepository.php';
 require_once __DIR__ . '/../app/XlsxHelper.php';
 require_once __DIR__ . '/../app/MobileMoneyGateway.php';
 require_once __DIR__ . '/../app/MobileMoneyRepository.php';
+require_once __DIR__ . '/../app/CustomerCreditRepository.php';
 
 $pageController = new PageController();
 $currentPage = $pageController->getCurrentPage();
@@ -77,7 +78,7 @@ $totals = [
     'totalCustomers' => 2,
     'totalProducts' => 4,
     'totalStockUnits' => 720,
-    'totalItems' => 720,
+    'totalItems' => 4,
     'transactionsToday' => 1,
 ];
 $weeklySales = [
@@ -116,6 +117,13 @@ $saleCustomerOptions = [
     ['id' => 2, 'name' => 'Mchina'],
 ];
 $allSales = $recentSales;
+$suppliers = [];
+$dashboardEodSummary = [
+    'totalSales' => 1035400.0,
+    'transactions' => 1,
+    'cash' => 1035400.0,
+    'mobileMoney' => 0.0,
+];
 $storeSettings = [
     'store_name' => 'Mchongoma Limited',
     'store_email' => 'info@mchongoma.com',
@@ -138,6 +146,8 @@ $storeSettings = [
 ];
 $configuredLocations = [];
 $mobileMoneyTransactions = [];
+$customerCredits = [];
+$customerOutstandingTotals = [];
 $securityAuditLogs = [];
 $securityLogsStatusFilter = strtolower(trim((string) ($_GET['status'] ?? 'all')));
 if (!in_array($securityLogsStatusFilter, ['all', 'success', 'failed', 'blocked', 'denied', 'error'], true)) {
@@ -170,6 +180,9 @@ try {
     $salesRepo = new SalesRepository($pdo);
     $mobileMoneyRepo = new MobileMoneyRepository($pdo);
     $locationsRepo = new LocationsRepository($pdo);
+    $customerCreditRepo = new CustomerCreditRepository($pdo);
+
+    ensureCustomerCreditTables($pdo);
 
     if (isStoreConfigSaveRequest()) {
         $_SESSION['flash_feedback'] = handleStoreConfigSave($pdo, $userRole);
@@ -226,8 +239,42 @@ try {
         'name' => (string) ($item['name'] ?? ''),
     ], $customerRepo->getCustomers(500));
     $allSales = $salesRepo->getSales(50);
+    $suppliers = (new SuppliersRepository($pdo))->getSuppliers(200);
+
+    $todaySummary = $salesRepo->getTodaySummary();
+    $eodByMethodStmt = $pdo->prepare(
+        'SELECT payment_method, COALESCE(SUM(amount), 0) AS total
+         FROM sales
+         WHERE DATE(created_at) = CURDATE()
+         GROUP BY payment_method'
+    );
+    $eodByMethodStmt->execute();
+    $todayPaymentRows = $eodByMethodStmt->fetchAll() ?: [];
+
+    $cashTotal = 0.0;
+    $mobileMoneyTotal = 0.0;
+    foreach ($todayPaymentRows as $row) {
+        $method = strtolower(trim((string) ($row['payment_method'] ?? '')));
+        $rowTotal = (float) ($row['total'] ?? 0);
+        if ($method === 'cash') {
+            $cashTotal += $rowTotal;
+        }
+        if ($method === 'mobile money') {
+            $mobileMoneyTotal += $rowTotal;
+        }
+    }
+
+    $dashboardEodSummary = [
+        'totalSales' => (float) ($todaySummary['total_sales'] ?? 0),
+        'transactions' => (int) ($todaySummary['total_transactions'] ?? 0),
+        'cash' => $cashTotal,
+        'mobileMoney' => $mobileMoneyTotal,
+    ];
+
     $configuredLocations = $locationsRepo->getLocations(200);
     $mobileMoneyTransactions = $mobileMoneyRepo->getRecentTransactions(50);
+    $customerCredits = $customerCreditRepo->getCredits(300, true);
+    $customerOutstandingTotals = $customerCreditRepo->getCustomerOutstandingTotals();
     $storeSettings = getStoreSettings($pdo, $storeSettings);
 
     if ($currentPage === 'security-logs' && canAccessPage('security-logs', $userRole)) {
@@ -550,6 +597,7 @@ function resolveEntityPageKey(string $entity): ?string
         'sale' => 'sales',
         'product' => 'inventory',
         'customer' => 'customers',
+        'customer_payment' => 'customers',
         'supplier' => 'suppliers',
         'employee' => 'employees',
         'expense' => 'expenses',
@@ -575,6 +623,66 @@ function canManageEntityRequest(string $entity, string $userRole): bool
     }
 
     return canAccessPage($pageKey, $userRole);
+}
+
+function ensureCustomerCreditTables(PDO $pdo): void
+{
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS customer_credits (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            sale_id INT NOT NULL,
+            customer_id INT NOT NULL,
+            total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+            paid_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+            outstanding_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+            status ENUM("Open", "Partial", "Paid") NOT NULL DEFAULT "Open",
+            due_date DATE NULL,
+            notes VARCHAR(255) NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_customer_credit_customer (customer_id),
+            INDEX idx_customer_credit_status (status),
+            INDEX idx_customer_credit_sale (sale_id),
+            CONSTRAINT fk_customer_credit_sale
+                FOREIGN KEY (sale_id) REFERENCES sales(id)
+                ON DELETE CASCADE ON UPDATE CASCADE,
+            CONSTRAINT fk_customer_credit_customer
+                FOREIGN KEY (customer_id) REFERENCES customers(id)
+                ON DELETE RESTRICT ON UPDATE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
+
+    $dueDateColumnCheck = $pdo->prepare(
+        'SELECT COUNT(*) AS total
+         FROM information_schema.columns
+         WHERE table_schema = DATABASE()
+           AND table_name = "customer_credits"
+           AND column_name = "due_date"'
+    );
+    $dueDateColumnCheck->execute();
+    if ((int) ($dueDateColumnCheck->fetch()['total'] ?? 0) === 0) {
+        $pdo->exec('ALTER TABLE customer_credits ADD COLUMN due_date DATE NULL AFTER status');
+    }
+
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS customer_credit_payments (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            credit_id INT NOT NULL,
+            customer_id INT NOT NULL,
+            amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+            payment_method ENUM("Cash", "Mobile Money", "Card", "Bank Transfer") NOT NULL DEFAULT "Cash",
+            reference VARCHAR(120) NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_credit_payment_credit (credit_id),
+            INDEX idx_credit_payment_customer (customer_id),
+            CONSTRAINT fk_credit_payment_credit
+                FOREIGN KEY (credit_id) REFERENCES customer_credits(id)
+                ON DELETE CASCADE ON UPDATE CASCADE,
+            CONSTRAINT fk_credit_payment_customer
+                FOREIGN KEY (customer_id) REFERENCES customers(id)
+                ON DELETE RESTRICT ON UPDATE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
 }
 
 function ensureStoreSettingsTable(PDO $pdo): void
@@ -945,10 +1053,17 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
         switch ($entity) {
             case 'sale':
                 $selectedGateway = strtolower(trim((string) ($_POST['payment_gateway'] ?? 'cash')));
-                $allowedGateways = ['cash', 'card', 'bank_transfer', 'mpesa', 'airtel_money', 'tigo_pesa'];
+                $allowedGateways = ['cash', 'card', 'bank_transfer', 'mpesa', 'airtel_money', 'tigo_pesa', 'pay_later'];
                 if (!in_array($selectedGateway, $allowedGateways, true)) {
                     throw new RuntimeException('Unsupported payment gateway selected.');
                 }
+
+                $isCreditSale = $selectedGateway === 'pay_later' || (int) ($_POST['is_credit_sale'] ?? 0) === 1;
+                $creditNote = trim((string) ($_POST['credit_note'] ?? ''));
+                $creditDueDateInput = trim((string) ($_POST['credit_due_date'] ?? ''));
+                $creditDueDate = $creditDueDateInput !== ''
+                    ? $creditDueDateInput
+                    : date('Y-m-d', strtotime('+30 days'));
 
                 $customerId = (int) ($_POST['customer_id'] ?? 0);
                 $productId = (int) ($_POST['product_id'] ?? 0);
@@ -963,6 +1078,7 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                     'mpesa' => 'Mobile Money',
                     'airtel_money' => 'Mobile Money',
                     'tigo_pesa' => 'Mobile Money',
+                    'pay_later' => 'Cash',
                 ];
 
                 $paymentMethod = $gatewayToPaymentMethod[$selectedGateway] ?? '';
@@ -1084,7 +1200,7 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
 
                     $amount = $subtotalAmount - $discountAmount;
 
-                    if ($paymentMethod === 'Mobile Money') {
+                    if ($paymentMethod === 'Mobile Money' && !$isCreditSale) {
                         $gateway = new MobileMoneyGateway($pdo);
                         $mobileResult = $gateway->initiate([
                             'provider' => $mobileProvider,
@@ -1099,6 +1215,8 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                         }
 
                         $paymentLabel = (string) ($mobileResult['provider_label'] ?? 'Mobile Money');
+                    } elseif ($isCreditSale) {
+                        $paymentLabel = 'Pay Later';
                     }
 
                     foreach ($receiptItems as $item) {
@@ -1111,6 +1229,17 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                         'amount' => $amount,
                         'payment_method' => $paymentMethod,
                     ]);
+
+                    if ($isCreditSale) {
+                        $customerCreditRepo = new CustomerCreditRepository($pdo);
+                        $customerCreditRepo->createCreditForSale(
+                            $saleId,
+                            $customerId,
+                            $amount,
+                            $creditNote,
+                            $creditDueDate
+                        );
+                    }
 
                     $createdSale = $salesRepo->getSale($saleId);
 
@@ -1130,6 +1259,7 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                         'items' => array_map(static fn(array $line): array => [
                             'name' => (string) ($line['name'] ?? ''),
                             'quantity' => (int) ($line['quantity'] ?? 0),
+                            'unit_price' => (float) ($line['unit_price'] ?? 0),
                             'line_total' => (float) ($line['line_total'] ?? 0),
                         ], $receiptItems),
                         'subtotal' => $subtotalAmount,
@@ -1161,7 +1291,38 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                     }
                 }
 
+                if ($isCreditSale) {
+                    $message .= ' Customer debt recorded as pay later.';
+                }
+
                 return ['type' => 'success', 'message' => trim($message)];
+
+            case 'customer_payment':
+                if ($currentPage !== 'customers') {
+                    throw new RuntimeException('Customer payment updates are only allowed from the customers page.');
+                }
+
+                $creditId = (int) ($_POST['credit_id'] ?? 0);
+                $paymentAmount = (float) ($_POST['payment_amount'] ?? 0);
+                $paymentMethod = trim((string) ($_POST['payment_method'] ?? 'Cash'));
+                $paymentReference = trim((string) ($_POST['payment_reference'] ?? ''));
+
+                $creditRepo = new CustomerCreditRepository($pdo);
+                $paymentResult = $creditRepo->recordPayment(
+                    $creditId,
+                    $paymentAmount,
+                    $paymentMethod,
+                    $paymentReference
+                );
+
+                return [
+                    'type' => 'success',
+                    'message' => sprintf(
+                        'Payment recorded. Remaining debt: Tsh %s (%s).',
+                        moneyFormat((float) ($paymentResult['new_outstanding_amount'] ?? 0)),
+                        (string) ($paymentResult['status'] ?? 'Updated')
+                    ),
+                ];
 
             case 'product':
                 (new InventoryRepository($pdo))->createProduct([
@@ -1335,6 +1496,23 @@ function handleEntityUpdate(PDO $pdo, string $currentPage, string $userRole): ar
                 ]);
 
                 return ['type' => 'success', 'message' => 'Product updated successfully.'];
+
+            case 'customer':
+                if ($currentPage !== 'customers') {
+                    throw new RuntimeException('Customer updates are only allowed from the customers page.');
+                }
+
+                $customerId = (int) ($_POST['id'] ?? 0);
+                if ($customerId <= 0) {
+                    throw new RuntimeException('Invalid customer ID.');
+                }
+
+                (new CustomerRepository($pdo))->updateCustomer($customerId, [
+                    'name' => (string) ($_POST['name'] ?? ''),
+                    'phone' => (string) ($_POST['phone'] ?? ''),
+                ]);
+
+                return ['type' => 'success', 'message' => 'Customer updated successfully.'];
         }
 
         return [
@@ -1728,21 +1906,27 @@ function handleProductImport(InventoryRepository $inventoryRepo, string $userRol
         }
 
         $result = $inventoryRepo->importProductsFromRows($parsed['rows']);
+        $validRows = count($parsed['rows']);
         $invalidRows = count($parsed['errors']);
-        $importedRows = (int) ($result['processed'] ?? 0);
-        $totalDataRows = $importedRows + $invalidRows;
+        $skippedRows = (int) ($parsed['skipped'] ?? 0);
+        $createdRows = (int) ($result['created'] ?? 0);
+        $updatedRows = (int) ($result['updated'] ?? 0);
+        $excelTotalItems = $validRows + $invalidRows;
+        $systemTotalItems = $inventoryRepo->getTotalCount();
         $message = sprintf(
-            'Import complete: %d total data rows, %d imported (%d created, %d updated), %d invalid, %d empty rows skipped.',
-            $totalDataRows,
-            $importedRows,
-            $result['created'],
-            $result['updated'],
-            $invalidRows,
-            $parsed['skipped']
+            'Import complete. Excel total items: %d. System total items: %d.',
+            $excelTotalItems,
+            $systemTotalItems
         );
 
-        if (!empty($parsed['errors'])) {
-            $message .= ' Some rows had issues: ' . implode(' | ', array_slice($parsed['errors'], 0, 3));
+        if ($excelTotalItems !== $systemTotalItems) {
+            $message .= sprintf(
+                ' Breakdown: %d created, %d updated existing items, %d invalid rows, %d empty rows skipped.',
+                $createdRows,
+                $updatedRows,
+                $invalidRows,
+                $skippedRows
+            );
         }
 
         return [
@@ -2004,8 +2188,8 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                 </article>
                 <article class="stat-card stat-pink" data-action="go" data-value="?page=inventory">
                     <div>
-                        <p>Total Stock</p>
-                        <h2><?= moneyFormat($totals['totalStockUnits'] ?? $totals['totalItems'] ?? 0) ?></h2>
+                        <p>Total Items</p>
+                        <h2><?= moneyFormat($totals['totalItems'] ?? $totals['totalProducts'] ?? 0) ?></h2>
                     </div>
                     <span><i class="fa-solid fa-cube"></i></span>
                 </article>
@@ -2183,9 +2367,17 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                         <h2>Customer Management</h2>
                         <p>View and manage your customers</p>
                     </div>
-                    <button class="btn btn-primary" data-action="showAddCustomerModal">
-                        <i class="fa-solid fa-plus"></i> Add Customer
-                    </button>
+                    <div class="page-actions">
+                        <a class="btn btn-secondary" href="export_customer_debts_xlsx.php">
+                            <i class="fa-solid fa-file-export"></i> Export Debt XLSX
+                        </a>
+                        <a class="btn btn-secondary" href="export_customer_debts_pdf.php" target="_blank" rel="noopener">
+                            <i class="fa-solid fa-file-pdf"></i> Export Debt PDF
+                        </a>
+                        <button class="btn btn-primary" data-action="showAddCustomerModal">
+                            <i class="fa-solid fa-plus"></i> Add Customer
+                        </button>
+                    </div>
                 </div>
 
                 <div class="data-table-container">
@@ -2202,17 +2394,26 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                 <th>Phone</th>
                                 <th>Total Orders</th>
                                 <th>Total Spent</th>
+                                <th>Outstanding Debt</th>
                                 <th>Member Since</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php foreach ($customers as $customer): ?>
+                                <?php $outstandingDebt = (float) ($customerOutstandingTotals[(int) $customer['id']] ?? 0); ?>
                                 <tr>
                                     <td><strong><?= e($customer['name']) ?></strong></td>
                                     <td><?= e($customer['phone'] ?? 'N/A') ?></td>
                                     <td><?= $customer['total_orders'] ?></td>
                                     <td>Tsh <?= moneyFormat($customer['total_spent']) ?></td>
+                                    <td>
+                                        <?php if ($outstandingDebt > 0): ?>
+                                            <strong style="color:#dc2626;">Tsh <?= moneyFormat($outstandingDebt) ?></strong>
+                                        <?php else: ?>
+                                            <span style="color:#16a34a;">Tsh 0</span>
+                                        <?php endif; ?>
+                                    </td>
                                     <td><?= date('M d, Y', strtotime($customer['created_at'])) ?></td>
                                     <td>
                                         <button class="btn-icon" data-action="viewCustomer" data-value="<?= (int) $customer['id'] ?>" title="View">
@@ -2224,9 +2425,127 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                         <button class="btn-icon danger" data-action="deleteCustomer" data-value="<?= (int) $customer['id'] ?>" title="Delete">
                                             <i class="fa-solid fa-trash"></i>
                                         </button>
+                                        <button class="btn-icon" data-action="printCustomerStatement" data-value="<?= (int) $customer['id'] ?>" title="Print Statement">
+                                            <i class="fa-solid fa-file-invoice"></i>
+                                        </button>
+                                        <?php if ($outstandingDebt > 0): ?>
+                                            <button class="btn-icon" data-action="receiveCustomerPayment" data-value="<?= (int) $customer['id'] ?>" title="Receive Payment">
+                                                <i class="fa-solid fa-money-bill-wave"></i>
+                                            </button>
+                                        <?php endif; ?>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="data-table-container" style="margin-top:18px;">
+                    <div class="table-header">
+                        <h3 style="margin:0; font-size:16px;">Customer Debt Ledger</h3>
+                        <div class="table-filters">
+                            <select id="customerDebtStatusFilter">
+                                <option value="all">All Debts</option>
+                                <option value="open">Open/Partial</option>
+                                <option value="overdue">Overdue Only</option>
+                                <option value="paid">Paid</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <?php
+                        $todayDateTs = strtotime(date('Y-m-d'));
+                        $overdueReminders = [];
+                        foreach ($customerCredits as $credit) {
+                            $reminderDueDate = (string) ($credit['due_date'] ?? '');
+                            $reminderOutstanding = (float) ($credit['outstanding_amount'] ?? 0);
+                            if ($reminderDueDate === '' || $reminderOutstanding <= 0) {
+                                continue;
+                            }
+
+                            $dueTs = strtotime($reminderDueDate);
+                            if ($dueTs === false || $dueTs >= $todayDateTs) {
+                                continue;
+                            }
+
+                            $daysOverdue = (int) floor(($todayDateTs - $dueTs) / 86400);
+                            $overdueReminders[] = sprintf(
+                                'Reminder: %s owes Tsh %s, overdue by %d day(s). Due date was %s.',
+                                (string) ($credit['customer_name'] ?? 'Customer'),
+                                moneyFormat($reminderOutstanding),
+                                max(1, $daysOverdue),
+                                date('M d, Y', $dueTs)
+                            );
+                        }
+                    ?>
+
+                    <div style="margin: 10px 0 14px; padding: 10px 12px; border: 1px solid <?= count($overdueReminders) > 0 ? '#fecaca' : '#bbf7d0' ?>; background: <?= count($overdueReminders) > 0 ? '#fff1f2' : '#f0fdf4' ?>; border-radius: 8px;">
+                        <strong style="display:block; margin-bottom:6px; color: <?= count($overdueReminders) > 0 ? '#b91c1c' : '#166534' ?>;">
+                            <?= count($overdueReminders) > 0 ? 'Automatic Reminder Notes' : 'Debt Reminder Notes' ?>
+                        </strong>
+                        <?php if (count($overdueReminders) === 0): ?>
+                            <span style="color:#166534;">No overdue customer debts today.</span>
+                        <?php else: ?>
+                            <ul style="margin:0; padding-left:18px; color:#7f1d1d;">
+                                <?php foreach ($overdueReminders as $note): ?>
+                                    <li><?= e($note) ?></li>
+                                <?php endforeach; ?>
+                            </ul>
+                        <?php endif; ?>
+                    </div>
+
+                    <table class="data-table" id="customerDebtTable">
+                        <thead>
+                            <tr>
+                                <th>Customer</th>
+                                <th>Sale Ref</th>
+                                <th>Total</th>
+                                <th>Paid</th>
+                                <th>Outstanding</th>
+                                <th>Due Date</th>
+                                <th>Status</th>
+                                <th>Date</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (count($customerCredits) === 0): ?>
+                                <tr>
+                                    <td colspan="8" style="text-align:center; padding: 20px;">
+                                        <i class="fa-solid fa-check-circle"></i> No outstanding customer debts
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($customerCredits as $credit): ?>
+                                    <?php
+                                        $creditOutstanding = (float) ($credit['outstanding_amount'] ?? 0);
+                                        $creditDueDate = (string) ($credit['due_date'] ?? '');
+                                        $isOverdue = $creditDueDate !== ''
+                                            && strtotime($creditDueDate) < strtotime(date('Y-m-d'))
+                                            && $creditOutstanding > 0;
+                                        $statusText = $isOverdue ? 'Overdue' : (string) ($credit['status'] ?? 'Open');
+                                        $statusClass = $isOverdue
+                                            ? 'danger'
+                                            : ($statusText === 'Paid' ? 'success' : 'warning');
+                                        $rowFilterState = $isOverdue
+                                            ? 'overdue'
+                                            : (in_array($statusText, ['Open', 'Partial'], true) ? 'open' : strtolower($statusText));
+                                    ?>
+                                    <tr data-credit-status="<?= e($rowFilterState) ?>" data-overdue="<?= $isOverdue ? '1' : '0' ?>">
+                                        <td><?= e((string) ($credit['customer_name'] ?? '')) ?></td>
+                                        <td><code><?= e((string) ($credit['transaction_no'] ?? ('SALE-' . (int) ($credit['sale_id'] ?? 0)))) ?></code></td>
+                                        <td>Tsh <?= moneyFormat((float) ($credit['total_amount'] ?? 0)) ?></td>
+                                        <td>Tsh <?= moneyFormat((float) ($credit['paid_amount'] ?? 0)) ?></td>
+                                        <td>
+                                            <strong style="color:<?= $creditOutstanding > 0 ? '#dc2626' : '#16a34a' ?>;">
+                                                Tsh <?= moneyFormat($creditOutstanding) ?>
+                                            </strong>
+                                        </td>
+                                        <td><?= $creditDueDate !== '' ? e(date('M d, Y', strtotime($creditDueDate))) : '<span style="color:#6b7280;">N/A</span>' ?></td>
+                                        <td><span class="status-badge <?= e($statusClass) ?>"><?= e($statusText) ?></span></td>
+                                        <td><?= date('M d, Y H:i', strtotime((string) ($credit['created_at'] ?? 'now'))) ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
@@ -2589,11 +2908,33 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                             </tr>
                         </thead>
                         <tbody>
-                            <tr>
-                                <td colspan="7" style="text-align:center; padding: 20px;">
-                                    <i class="fa-solid fa-box-open"></i> No suppliers added yet
-                                </td>
-                            </tr>
+                            <?php if (count($suppliers) === 0): ?>
+                                <tr>
+                                    <td colspan="7" style="text-align:center; padding: 20px;">
+                                        <i class="fa-solid fa-box-open"></i> No suppliers added yet
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($suppliers as $supplier): ?>
+                                    <?php
+                                        $status = trim((string) ($supplier['status'] ?? 'Active'));
+                                        $statusClass = strtolower($status) === 'active' ? 'success' : 'warning';
+                                    ?>
+                                    <tr>
+                                        <td><?= (int) ($supplier['id'] ?? 0) ?></td>
+                                        <td><strong><?= e((string) ($supplier['name'] ?? '')) ?></strong></td>
+                                        <td><?= e((string) ($supplier['contact_person'] ?? '-')) ?></td>
+                                        <td><?= e((string) (($supplier['phone'] ?? '') !== '' ? $supplier['phone'] : 'N/A')) ?></td>
+                                        <td><?= e((string) (($supplier['email'] ?? '') !== '' ? $supplier['email'] : 'N/A')) ?></td>
+                                        <td><span class="status-badge <?= e($statusClass) ?>"><?= e($status) ?></span></td>
+                                        <td>
+                                            <button class="btn-icon" title="View">
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
@@ -3295,6 +3636,30 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
         'reorder_level' => (int) ($item['reorder_level'] ?? 5),
         'unit_price' => (float) ($item['unit_price'] ?? 0),
     ], $products),
+    'customers' => array_map(static fn(array $item) => [
+        'id' => (int) ($item['id'] ?? 0),
+        'name' => (string) ($item['name'] ?? ''),
+        'phone' => (string) ($item['phone'] ?? ''),
+    ], $customers),
+    'dashboardEodSummary' => [
+        'totalSales' => (float) ($dashboardEodSummary['totalSales'] ?? 0),
+        'transactions' => (int) ($dashboardEodSummary['transactions'] ?? 0),
+        'cash' => (float) ($dashboardEodSummary['cash'] ?? 0),
+        'mobileMoney' => (float) ($dashboardEodSummary['mobileMoney'] ?? 0),
+    ],
+    'customerCredits' => array_map(static fn(array $item) => [
+        'id' => (int) ($item['id'] ?? 0),
+        'sale_id' => (int) ($item['sale_id'] ?? 0),
+        'customer_id' => (int) ($item['customer_id'] ?? 0),
+        'customer_name' => (string) ($item['customer_name'] ?? ''),
+        'transaction_no' => (string) ($item['transaction_no'] ?? ''),
+        'total_amount' => (float) ($item['total_amount'] ?? 0),
+        'paid_amount' => (float) ($item['paid_amount'] ?? 0),
+        'outstanding_amount' => (float) ($item['outstanding_amount'] ?? 0),
+        'status' => (string) ($item['status'] ?? 'Open'),
+        'due_date' => (string) ($item['due_date'] ?? ''),
+        'created_at' => (string) ($item['created_at'] ?? ''),
+    ], $customerCredits),
 ], JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
 <script src="assets/js/dashboard.js"></script>
 </body>
