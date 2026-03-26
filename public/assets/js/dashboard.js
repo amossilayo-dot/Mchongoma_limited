@@ -27,13 +27,23 @@ function isValidIdentifier(str) {
 function getAppConfig() {
     const configEl = document.getElementById('appConfig');
     if (!configEl) {
-        return { salesChartData: { week: { labels: [], values: [] }, month: { labels: [], values: [] } }, currentPage: 'dashboard', csrfToken: '' };
+        return {
+            salesChartData: { week: { labels: [], values: [] }, month: { labels: [], values: [] } },
+            currentPage: 'dashboard',
+            csrfToken: '',
+            inventoryProducts: [],
+        };
     }
 
     try {
         return JSON.parse(configEl.textContent || '{}');
     } catch (error) {
-        return { salesChartData: { week: { labels: [], values: [] }, month: { labels: [], values: [] } }, currentPage: 'dashboard', csrfToken: '' };
+        return {
+            salesChartData: { week: { labels: [], values: [] }, month: { labels: [], values: [] } },
+            currentPage: 'dashboard',
+            csrfToken: '',
+            inventoryProducts: [],
+        };
     }
 }
 
@@ -1758,7 +1768,58 @@ function createCustomer(event) {
 }
 
 function editProduct(id) {
-    showToast('warning', 'Edit functionality requires API integration');
+    const productId = Number.parseInt(id, 10);
+    if (!Number.isFinite(productId) || productId <= 0) {
+        showToast('error', 'Invalid product ID');
+        return;
+    }
+
+    const products = Array.isArray(APP_CONFIG.inventoryProducts) ? APP_CONFIG.inventoryProducts : [];
+    const product = products.find((item) => Number.parseInt(item.id, 10) === productId);
+
+    if (!product) {
+        showToast('error', 'Product not found');
+        return;
+    }
+
+    const csrfToken = escapeHtml(APP_CONFIG.csrfToken || '');
+    const content = `
+        <form id="editProductForm" method="POST" action="?page=inventory">
+            <input type="hidden" name="action" value="update_entity">
+            <input type="hidden" name="entity" value="product">
+            <input type="hidden" name="id" value="${productId}">
+            <input type="hidden" name="csrf_token" value="${csrfToken}">
+            <div class="form-group">
+                <label>Product Name</label>
+                <input type="text" name="name" required value="${escapeHtml(product.name || '')}">
+            </div>
+            <div class="form-group">
+                <label>SKU</label>
+                <input type="text" name="sku" required value="${escapeHtml(product.sku || '')}">
+            </div>
+            <div class="form-group">
+                <label>Product Category</label>
+                <input type="text" name="category" value="${escapeHtml(product.category || '')}">
+            </div>
+            <div class="form-group">
+                <label>Unit Price (Tsh)</label>
+                <input type="number" name="unit_price" min="0" step="0.01" required value="${escapeHtml(product.unit_price || 0)}">
+            </div>
+            <div class="form-group">
+                <label>Stock Quantity</label>
+                <input type="number" name="stock_qty" min="0" required value="${escapeHtml(product.stock_qty || 0)}">
+            </div>
+            <div class="form-group">
+                <label>Reorder Level</label>
+                <input type="number" name="reorder_level" min="0" required value="${escapeHtml(product.reorder_level || 5)}">
+            </div>
+        </form>
+    `;
+
+    openModal('Edit Product', content, [
+        { text: 'Cancel', class: 'btn-secondary', onclick: 'closeModal()' },
+        { text: 'Save Changes', class: 'btn-primary', onclick: 'document.getElementById("editProductForm").requestSubmit()' }
+    ]);
 }
 
 function deleteProduct(id) {

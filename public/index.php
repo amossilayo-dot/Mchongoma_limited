@@ -131,6 +131,12 @@ $storeSettings = [
 ];
 $configuredLocations = [];
 $mobileMoneyTransactions = [];
+$inventoryProductCount = count($products);
+$inventoryTotalStockUnits = array_reduce(
+    $products,
+    static fn(int $carry, array $item): int => $carry + (int) ($item['stock_qty'] ?? 0),
+    0
+);
 
 try {
     $pdo = getDatabaseConnection();
@@ -164,6 +170,12 @@ try {
         exit;
     }
 
+    if (isEntityUpdateRequest()) {
+        $_SESSION['flash_feedback'] = handleEntityUpdate($pdo, $currentPage);
+        header('Location: ?page=' . urlencode($currentPage));
+        exit;
+    }
+
     if (isInventoryImportRequest()) {
         $importFeedback = handleProductImport($inventoryRepo);
     }
@@ -182,6 +194,12 @@ try {
         ? max(200, $inventoryRepo->getTotalCount())
         : 200;
     $products = $inventoryRepo->getProducts($inventoryProductLimit);
+    $inventoryProductCount = count($products);
+    $inventoryTotalStockUnits = array_reduce(
+        $products,
+        static fn(int $carry, array $item): int => $carry + (int) ($item['stock_qty'] ?? 0),
+        0
+    );
     $customers = $customerRepo->getCustomers(50);
     $saleProductOptions = array_map(static fn(array $item) => [
         'id' => (int) ($item['id'] ?? 0),
@@ -267,6 +285,12 @@ function isEntityCreateRequest(): bool
 {
     return ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST'
         && ($_POST['action'] ?? '') === 'create_entity';
+}
+
+function isEntityUpdateRequest(): bool
+{
+    return ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST'
+        && ($_POST['action'] ?? '') === 'update_entity';
 }
 
 function isStoreConfigSaveRequest(): bool
@@ -788,6 +812,56 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName): ar
             'message' => isDebugMode()
                 ? 'Save failed: ' . $exception->getMessage()
                 : 'Could not save the record. Please check your input and try again.',
+        ];
+    }
+}
+
+function handleEntityUpdate(PDO $pdo, string $currentPage): array
+{
+    if (!hasValidCsrfToken()) {
+        return [
+            'type' => 'error',
+            'message' => 'Request validation failed. Refresh the page and try again.',
+        ];
+    }
+
+    $entity = (string) ($_POST['entity'] ?? '');
+
+    try {
+        switch ($entity) {
+            case 'product':
+                if ($currentPage !== 'inventory') {
+                    throw new RuntimeException('Product updates are only allowed from the inventory page.');
+                }
+
+                $productId = (int) ($_POST['id'] ?? 0);
+                if ($productId <= 0) {
+                    throw new RuntimeException('Invalid product ID.');
+                }
+
+                (new InventoryRepository($pdo))->updateProduct($productId, [
+                    'name' => (string) ($_POST['name'] ?? ''),
+                    'sku' => (string) ($_POST['sku'] ?? ''),
+                    'category' => (string) ($_POST['category'] ?? ''),
+                    'unit_price' => (float) ($_POST['unit_price'] ?? 0),
+                    'stock_qty' => (int) ($_POST['stock_qty'] ?? 0),
+                    'reorder_level' => (int) ($_POST['reorder_level'] ?? 5),
+                ]);
+
+                return ['type' => 'success', 'message' => 'Product updated successfully.'];
+        }
+
+        return [
+            'type' => 'warning',
+            'message' => 'Unknown update action requested. No changes were made.',
+        ];
+    } catch (Throwable $exception) {
+        error_log('[POS Update] ' . $exception->getMessage());
+        return [
+            'type' => 'error',
+            'message' => isDebugMode()
+                ? 'Update failed: ' . $exception->getMessage()
+                : 'Could not update the record. Please check your input and try again.',
         ];
     }
 }
@@ -1515,6 +1589,9 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                     <div class="page-info">
                         <h2>Product Inventory</h2>
                         <p>Manage your products and stock levels</p>
+                        <p style="margin-top:6px; color:#6B7280; font-size:13px;">
+                            <?= moneyFormat($inventoryProductCount) ?> items found
+                        </p>
                     </div>
                     <div class="page-actions">
                         <button class="btn btn-secondary" data-action="showImportProductsModal">
@@ -2458,6 +2535,15 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
     'csrfToken' => getCsrfToken(),
     'saleCustomers' => $saleCustomerOptions,
     'saleProducts' => $saleProductOptions,
+    'inventoryProducts' => array_map(static fn(array $item) => [
+        'id' => (int) ($item['id'] ?? 0),
+        'name' => (string) ($item['name'] ?? ''),
+        'sku' => (string) ($item['sku'] ?? ''),
+        'category' => (string) ($item['category'] ?? ''),
+        'stock_qty' => (int) ($item['stock_qty'] ?? 0),
+        'reorder_level' => (int) ($item['reorder_level'] ?? 5),
+        'unit_price' => (float) ($item['unit_price'] ?? 0),
+    ], $products),
 ], JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
 <script src="assets/js/dashboard.js"></script>
 </body>

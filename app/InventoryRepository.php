@@ -257,12 +257,13 @@ final class InventoryRepository
 
         $stmt = $this->pdo->prepare(
             'UPDATE products
-             SET ' . $stockColumn . ' = ' . $stockColumn . ' - :quantity
-             WHERE id = :id AND ' . $stockColumn . ' >= :quantity'
+             SET ' . $stockColumn . ' = ' . $stockColumn . ' - :quantity_deduct
+             WHERE id = :id AND ' . $stockColumn . ' >= :quantity_check'
         );
         $stmt->execute([
             ':id' => $productId,
-            ':quantity' => $quantity,
+            ':quantity_deduct' => $quantity,
+            ':quantity_check' => $quantity,
         ]);
 
         if ($stmt->rowCount() < 1) {
