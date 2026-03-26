@@ -48,7 +48,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sign In - Mchongoma POS</title>
+    <title>Sign In - Mchongoma Limited</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -59,7 +59,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 <div class="login-shell">
     <section class="login-brand-panel">
         <div class="login-brand-mark"><i class="fa-solid fa-bag-shopping"></i></div>
-        <h1>Mchongoma POS</h1>
+        <h1>Mchongoma Limited</h1>
         <p>Manage sales, inventory, customers, and reports from one focused workspace.</p>
         <div class="login-brand-pills">
             <span><i class="fa-solid fa-shield-halved"></i> Secure Session</span>
@@ -80,23 +80,44 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(loginCsrfToken(), ENT_QUOTES, 'UTF-8') ?>">
             <input type="hidden" name="redirect" value="<?= htmlspecialchars($redirect, ENT_QUOTES, 'UTF-8') ?>">
 
-            <label for="email">Email</label>
+            <label for="email">Username or Email</label>
             <div class="login-input-wrap">
                 <i class="fa-regular fa-envelope"></i>
-                <input id="email" name="email" type="email" required placeholder="admin@mchongoma.com" value="<?= htmlspecialchars((string) ($_POST['email'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
+                <input id="email" name="email" type="text" required placeholder="admin or admin@mchongoma.com" value="<?= htmlspecialchars((string) ($_POST['email'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
             </div>
 
             <label for="password">Password</label>
-            <div class="login-input-wrap">
+            <div class="login-input-wrap has-action">
                 <i class="fa-solid fa-lock"></i>
                 <input id="password" name="password" type="password" required placeholder="Enter your password">
+                <button type="button" class="login-password-toggle" id="passwordToggle" aria-label="Show password" aria-pressed="false">
+                    <i class="fa-regular fa-eye"></i>
+                </button>
             </div>
 
-            <button class="login-btn" type="submit"><i class="fa-solid fa-right-to-bracket"></i> Sign In</button>
+            <div class="login-meta-row">
+                <label class="login-check" for="remember_me">
+                    <input id="remember_me" name="remember_me" type="checkbox" value="1">
+                    <span>Remember me</span>
+                </label>
+                <a class="login-text-link" href="mailto:support@mchongoma.com?subject=Password%20Reset%20Request">Forgot password?</a>
+            </div>
+
+            <button class="login-btn" type="submit" id="loginSubmitBtn">
+                <i class="fa-solid fa-right-to-bracket"></i>
+                <span>Sign In</span>
+            </button>
         </form>
 
-        <p class="login-hint">Default sample user: <strong>admin@mchongoma.com</strong> / <strong>password</strong></p>
+        <p class="login-support">Need help? Contact <a class="login-text-link" href="mailto:support@mchongoma.com">support@mchongoma.com</a></p>
+        <p class="login-legal">
+            <a class="login-text-link" href="#" aria-label="Privacy Policy">Privacy Policy</a>
+            <span>•</span>
+            <a class="login-text-link" href="#" aria-label="Terms of Use">Terms of Use</a>
+        </p>
+        <p class="login-hint">Mchongoma Limited &copy; 2026</p>
     </section>
 </div>
+<script src="assets/js/login.js"></script>
 </body>
 </html>

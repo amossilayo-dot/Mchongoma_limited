@@ -1264,6 +1264,36 @@ body {
     transition: border-color var(--transition-base), box-shadow var(--transition-base), background var(--transition-base);
 }
 
+.login-input-wrap.has-action input {
+    padding-right: 44px;
+}
+
+.login-password-toggle {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 30px;
+    height: 30px;
+    border: none;
+    background: transparent;
+    color: #6b7280;
+    border-radius: 8px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+}
+
+.login-password-toggle:hover {
+    background: #eef2ff;
+    color: #4338ca;
+}
+
+.login-password-toggle:focus-visible {
+    outline: 2px solid #4f46e5;
+    outline-offset: 2px;
+}
+
 .login-input-wrap input:focus {
     outline: none;
     border-color: #4f46e5;
@@ -1285,6 +1315,61 @@ body {
     transition: transform var(--transition-base), box-shadow var(--transition-base), filter var(--transition-base);
 }
 
+.login-btn:focus-visible {
+    outline: 2px solid #312e81;
+    outline-offset: 2px;
+}
+
+.login-btn.is-loading {
+    opacity: 0.88;
+    cursor: wait;
+    transform: none;
+    box-shadow: none;
+}
+
+.login-meta-row {
+    margin: -2px 0 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.login-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #4b5563;
+    margin-bottom: 0;
+    letter-spacing: 0;
+    font-weight: 600;
+    text-transform: none;
+}
+
+.login-check input {
+    width: 16px;
+    height: 16px;
+    accent-color: #4f46e5;
+}
+
+.login-text-link {
+    color: #4338ca;
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.login-text-link:hover {
+    text-decoration: underline;
+}
+
+.login-text-link:focus-visible {
+    outline: 2px solid #4f46e5;
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
 .login-btn:hover {
     transform: translateY(-1px);
     box-shadow: 0 12px 26px rgba(79, 70, 229, 0.35);
@@ -1292,7 +1377,23 @@ body {
 }
 
 .login-hint {
+    margin-top: 12px;
+    font-size: 12px;
+    color: #6b7280;
+}
+
+.login-support {
     margin-top: 16px;
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: #4b5563;
+}
+
+.login-legal {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
     font-size: 12px;
     color: #6b7280;
 }
@@ -1314,6 +1415,11 @@ body {
 
     .login-card {
         padding: 24px;
+    }
+
+    .login-meta-row {
+        flex-wrap: wrap;
+        align-items: flex-start;
     }
 }
 

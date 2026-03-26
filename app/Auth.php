@@ -61,11 +61,11 @@ function hasUsersTable(PDO $pdo): bool
     return ((int) $stmt->fetch()['total']) === 1;
 }
 
-function authenticateUser(string $email, string $password): array
+function authenticateUser(string $login, string $password): array
 {
-    $email = trim($email);
-    if ($email === '' || $password === '') {
-        return ['ok' => false, 'message' => 'Email and password are required.'];
+    $login = trim($login);
+    if ($login === '' || $password === '') {
+        return ['ok' => false, 'message' => 'Username/email and password are required.'];
     }
 
     try {
@@ -81,14 +81,17 @@ function authenticateUser(string $email, string $password): array
     $stmt = $pdo->prepare(
         'SELECT id, name, email, password, role
          FROM users
-         WHERE email = :email
+         WHERE email = :login_email OR name = :login_name
          LIMIT 1'
     );
-    $stmt->execute([':email' => $email]);
+    $stmt->execute([
+        ':login_email' => $login,
+        ':login_name' => $login,
+    ]);
     $user = $stmt->fetch();
 
     if (!$user || !password_verify($password, (string) $user['password'])) {
-        return ['ok' => false, 'message' => 'Invalid email or password.'];
+        return ['ok' => false, 'message' => 'Invalid username/email or password.'];
     }
 
     session_regenerate_id(true);
