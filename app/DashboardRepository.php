@@ -12,9 +12,12 @@ final class DashboardRepository
 
     public function getTotals(): array
     {
+        $columns = $this->resolveProductColumnMap();
+        $quantityColumn = $columns['quantity'];
+
         $totalSales = (float) $this->pdo->query('SELECT COALESCE(SUM(amount), 0) AS total FROM sales')->fetch()['total'];
         $totalCustomers = (int) $this->pdo->query('SELECT COUNT(*) AS total FROM customers')->fetch()['total'];
-        $totalItems = (int) $this->pdo->query('SELECT COUNT(*) AS total FROM products')->fetch()['total'];
+        $totalItems = (int) $this->pdo->query('SELECT COALESCE(SUM(' . $quantityColumn . '), 0) AS total FROM products')->fetch()['total'];
 
         $stmt = $this->pdo->prepare('SELECT COUNT(*) AS total FROM sales WHERE DATE(created_at) = CURDATE()');
         $stmt->execute();

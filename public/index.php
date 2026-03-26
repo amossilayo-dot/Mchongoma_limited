@@ -1371,7 +1371,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" integrity="sha512-Evv84Mr4kqVGRNSgIGL/F/aIDqQb7xQ2vcrdIwxfjThSH8CSR7PBEakCr51Ck+w+/U6swU2Im1vVX0SVk9ABhg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     <link rel="stylesheet" href="assets/css/style.css">
 </head>
-<body>
+<body class="<?= $currentPage === 'sales' ? 'sales-page' : '' ?>">
 <div class="app">
     <aside class="sidebar" id="sidebar">
         <div class="brand">
@@ -1730,124 +1730,188 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
 
         <?php elseif ($currentPage === 'sales' || $currentPage === 'transactions'): ?>
             <!-- Sales/Transactions Page -->
-            <section class="page-content">
-                <div class="page-header">
-                    <div class="page-info">
-                        <h2><?= $currentPage === 'sales' ? 'Point of Sale' : 'Transaction History' ?></h2>
-                        <p><?= $currentPage === 'sales' ? 'Create and manage sales' : 'View all transactions' ?></p>
-                    </div>
-                    <?php if ($currentPage === 'sales'): ?>
-                        <button class="btn btn-primary" data-action="showNewSaleModal">
-                            <i class="fa-solid fa-plus"></i> New Sale
-                        </button>
-                    <?php endif; ?>
-                </div>
+            <?php if ($currentPage === 'sales'): ?>
+                <section class="page-content sales-pos-shell">
+                    <div class="sales-layout">
+                        <div class="sales-products-panel">
+                            <div class="sales-search-wrap">
+                                <i class="fa-solid fa-magnifying-glass"></i>
+                                <input type="text" id="salesProductSearch" placeholder="Search products or scan barcode...">
+                            </div>
 
-                <div class="data-table-container">
-                    <div class="table-header">
-                        <div class="search-box">
-                            <i class="fa-solid fa-search"></i>
-                            <input type="text" id="salesSearch" placeholder="Search transactions..." onkeyup="filterTable('salesTable', this.value)">
-                        </div>
-                        <div class="table-filters">
-                            <select onchange="filterByPayment('salesTable', this.value)">
-                                <option value="all">All Payments</option>
-                                <option value="cash">Cash</option>
-                                <option value="mobile">Mobile Money</option>
-                                <option value="card">Card</option>
-                            </select>
-                        </div>
-                    </div>
-                    <table class="data-table" id="salesTable">
-                        <thead>
-                            <tr>
-                                <th>Transaction #</th>
-                                <th>Customer</th>
-                                <th>Amount</th>
-                                <th>Payment Method</th>
-                                <th>Date & Time</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($allSales as $sale): ?>
-                                <?php
-                                    $paymentMethodRaw = strtolower(trim((string) ($sale['payment_method'] ?? '')));
-                                    $paymentMethodValue = str_replace(' ', '_', $paymentMethodRaw);
-                                ?>
-                                <tr data-payment="<?= e($paymentMethodValue) ?>">
-                                    <td><code><?= e($sale['transaction_no']) ?></code></td>
-                                    <td><?= e($sale['customer_name']) ?></td>
-                                    <td><strong>Tsh <?= moneyFormat((float) $sale['amount']) ?></strong></td>
-                                    <td>
-                                        <span class="payment-badge <?= strtolower($sale['payment_method']) ?>">
-                                            <?= e($sale['payment_method']) ?>
-                                        </span>
-                                    </td>
-                                    <td><?= date('M d, Y H:i', strtotime($sale['created_at'])) ?></td>
-                                    <td>
-                                        <button class="btn-icon" data-action="viewReceipt" data-value="<?= e($sale['transaction_no']) ?>" title="View Receipt">
-                                            <i class="fa-solid fa-receipt"></i>
-                                        </button>
-                                        <button class="btn-icon" data-action="printReceipt" data-value="<?= e($sale['transaction_no']) ?>" title="Print">
-                                            <i class="fa-solid fa-print"></i>
-                                        </button>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
+                            <div class="sales-category-row">
+                                <button type="button" class="sales-chip active">All</button>
+                            </div>
 
-                <div class="data-table-container" style="margin-top: 18px;">
-                    <div class="table-header">
-                        <h3 style="margin:0; font-size:16px;">Mobile Money Payment Status</h3>
-                    </div>
-                    <table class="data-table" id="mobileMoneyTable">
-                        <thead>
-                            <tr>
-                                <th>Provider</th>
-                                <th>Phone</th>
-                                <th>Amount</th>
-                                <th>Reference</th>
-                                <th>Sale</th>
-                                <th>Status</th>
-                                <th>Date & Time</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php if (count($mobileMoneyTransactions) === 0): ?>
-                                <tr>
-                                    <td colspan="7" style="text-align:center; padding: 20px;">
-                                        <i class="fa-solid fa-mobile-screen-button"></i> No mobile money payments yet
-                                    </td>
-                                </tr>
-                            <?php else: ?>
-                                <?php foreach ($mobileMoneyTransactions as $payment): ?>
+                            <div class="sales-products-grid" id="salesProductsGrid">
+                                <?php foreach ($saleProductOptions as $product): ?>
                                     <?php
-                                        $status = strtolower((string) ($payment['status'] ?? 'pending'));
-                                        $statusClass = 'warning';
-                                        if ($status === 'success' || $status === 'completed' || $status === 'mock_approved') {
-                                            $statusClass = 'success';
-                                        } elseif ($status === 'failed' || $status === 'cancelled') {
-                                            $statusClass = 'danger';
-                                        }
+                                        $productName = (string) ($product['name'] ?? 'Product');
+                                        $firstLetter = strtoupper(substr(trim($productName), 0, 1));
+                                        $stockQty = (int) ($product['stock_qty'] ?? 0);
+                                        $category = trim((string) ($product['category'] ?? ''));
+                                        $searchBlob = strtolower($productName . ' ' . $category);
                                     ?>
-                                    <tr>
-                                        <td><?= e((string) ($payment['provider'] ?? '')) ?></td>
-                                        <td><?= e((string) ($payment['msisdn'] ?? '')) ?></td>
-                                        <td><strong><?= e((string) ($payment['currency'] ?? 'TZS')) ?> <?= moneyFormat((float) ($payment['amount'] ?? 0)) ?></strong></td>
-                                        <td><code><?= e((string) ($payment['external_reference'] ?? '')) ?></code></td>
-                                        <td><?= e((string) ($payment['transaction_no'] ?? '-')) ?></td>
-                                        <td><span class="status-badge <?= e($statusClass) ?>"><?= e(ucfirst($status)) ?></span></td>
-                                        <td><?= date('M d, Y H:i', strtotime((string) ($payment['created_at'] ?? 'now'))) ?></td>
+                                    <button
+                                        type="button"
+                                        class="sales-product-card"
+                                        data-product-id="<?= (int) ($product['id'] ?? 0) ?>"
+                                        data-product-name="<?= e($productName) ?>"
+                                        data-product-price="<?= (float) ($product['unit_price'] ?? 0) ?>"
+                                        data-product-stock="<?= $stockQty ?>"
+                                        data-product-search="<?= e($searchBlob) ?>"
+                                    >
+                                        <span class="sales-product-icon"><?= e($firstLetter !== '' ? $firstLetter : 'P') ?></span>
+                                        <strong><?= e($productName) ?></strong>
+                                        <span class="sales-product-price">Tsh <?= moneyFormat((float) ($product['unit_price'] ?? 0)) ?></span>
+                                        <span class="sales-product-stock"><?= $stockQty ?> in stock</span>
+                                    </button>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+
+                        <aside class="sales-current-panel">
+                            <div class="sales-current-header">
+                                <h3>Current Sale</h3>
+                                <button type="button" id="salesClearAll">Clear All</button>
+                            </div>
+
+                            <div class="sales-cart-items" id="salesCartItems"></div>
+
+                            <div class="sales-summary">
+                                <div class="sales-summary-row">
+                                    <span>Subtotal</span>
+                                    <strong id="salesSubtotal">Tsh 0</strong>
+                                </div>
+                                <div class="sales-summary-row">
+                                    <span>Tax</span>
+                                    <strong id="salesTax">Tsh 0</strong>
+                                </div>
+                                <div class="sales-summary-row total">
+                                    <span>Total</span>
+                                    <strong id="salesTotal">Tsh 0</strong>
+                                </div>
+                            </div>
+
+                            <button type="button" class="sales-charge-btn" id="salesChargeBtn">Charge Tsh 0</button>
+                        </aside>
+                    </div>
+                </section>
+            <?php else: ?>
+                <section class="page-content">
+                    <div class="page-header">
+                        <div class="page-info">
+                            <h2>Transaction History</h2>
+                            <p>View all transactions</p>
+                        </div>
+                    </div>
+
+                    <div class="data-table-container">
+                        <div class="table-header">
+                            <div class="search-box">
+                                <i class="fa-solid fa-search"></i>
+                                <input type="text" id="salesSearch" placeholder="Search transactions..." onkeyup="filterTable('salesTable', this.value)">
+                            </div>
+                            <div class="table-filters">
+                                <select onchange="filterByPayment('salesTable', this.value)">
+                                    <option value="all">All Payments</option>
+                                    <option value="cash">Cash</option>
+                                    <option value="mobile">Mobile Money</option>
+                                    <option value="card">Card</option>
+                                </select>
+                            </div>
+                        </div>
+                        <table class="data-table" id="salesTable">
+                            <thead>
+                                <tr>
+                                    <th>Transaction #</th>
+                                    <th>Customer</th>
+                                    <th>Amount</th>
+                                    <th>Payment Method</th>
+                                    <th>Date & Time</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($allSales as $sale): ?>
+                                    <?php
+                                        $paymentMethodRaw = strtolower(trim((string) ($sale['payment_method'] ?? '')));
+                                        $paymentMethodValue = str_replace(' ', '_', $paymentMethodRaw);
+                                    ?>
+                                    <tr data-payment="<?= e($paymentMethodValue) ?>">
+                                        <td><code><?= e($sale['transaction_no']) ?></code></td>
+                                        <td><?= e($sale['customer_name']) ?></td>
+                                        <td><strong>Tsh <?= moneyFormat((float) $sale['amount']) ?></strong></td>
+                                        <td>
+                                            <span class="payment-badge <?= strtolower($sale['payment_method']) ?>">
+                                                <?= e($sale['payment_method']) ?>
+                                            </span>
+                                        </td>
+                                        <td><?= date('M d, Y H:i', strtotime($sale['created_at'])) ?></td>
+                                        <td>
+                                            <button class="btn-icon" data-action="viewReceipt" data-value="<?= e($sale['transaction_no']) ?>" title="View Receipt">
+                                                <i class="fa-solid fa-receipt"></i>
+                                            </button>
+                                            <button class="btn-icon" data-action="printReceipt" data-value="<?= e($sale['transaction_no']) ?>" title="Print">
+                                                <i class="fa-solid fa-print"></i>
+                                            </button>
+                                        </td>
                                     </tr>
                                 <?php endforeach; ?>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
-                </div>
-            </section>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="data-table-container" style="margin-top: 18px;">
+                        <div class="table-header">
+                            <h3 style="margin:0; font-size:16px;">Mobile Money Payment Status</h3>
+                        </div>
+                        <table class="data-table" id="mobileMoneyTable">
+                            <thead>
+                                <tr>
+                                    <th>Provider</th>
+                                    <th>Phone</th>
+                                    <th>Amount</th>
+                                    <th>Reference</th>
+                                    <th>Sale</th>
+                                    <th>Status</th>
+                                    <th>Date & Time</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if (count($mobileMoneyTransactions) === 0): ?>
+                                    <tr>
+                                        <td colspan="7" style="text-align:center; padding: 20px;">
+                                            <i class="fa-solid fa-mobile-screen-button"></i> No mobile money payments yet
+                                        </td>
+                                    </tr>
+                                <?php else: ?>
+                                    <?php foreach ($mobileMoneyTransactions as $payment): ?>
+                                        <?php
+                                            $status = strtolower((string) ($payment['status'] ?? 'pending'));
+                                            $statusClass = 'warning';
+                                            if ($status === 'success' || $status === 'completed' || $status === 'mock_approved') {
+                                                $statusClass = 'success';
+                                            } elseif ($status === 'failed' || $status === 'cancelled') {
+                                                $statusClass = 'danger';
+                                            }
+                                        ?>
+                                        <tr>
+                                            <td><?= e((string) ($payment['provider'] ?? '')) ?></td>
+                                            <td><?= e((string) ($payment['msisdn'] ?? '')) ?></td>
+                                            <td><strong><?= e((string) ($payment['currency'] ?? 'TZS')) ?> <?= moneyFormat((float) ($payment['amount'] ?? 0)) ?></strong></td>
+                                            <td><code><?= e((string) ($payment['external_reference'] ?? '')) ?></code></td>
+                                            <td><?= e((string) ($payment['transaction_no'] ?? '-')) ?></td>
+                                            <td><span class="status-badge <?= e($statusClass) ?>"><?= e(ucfirst($status)) ?></span></td>
+                                            <td><?= date('M d, Y H:i', strtotime((string) ($payment['created_at'] ?? 'now'))) ?></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            <?php endif; ?>
 
         <?php elseif ($currentPage === 'reports'): ?>
             <!-- Reports Page -->
@@ -2252,12 +2316,12 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                             <button class="btn-icon" title="Saved"><i class="fa-solid fa-check"></i></button>
                                         </td>
                                     </tr>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
-                </div>
-            </section>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
 
         <?php elseif ($currentPage === 'messages'): ?>
             <section class="page-content">

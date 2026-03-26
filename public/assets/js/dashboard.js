@@ -214,6 +214,7 @@ const I18N_TEXT = {
     'Total Sales': 'Jumla ya Mauzo',
     'Total Customers': 'Jumla ya Wateja',
     'Total Products': 'Jumla ya Bidhaa',
+    'Total Stock': 'Jumla ya Stoo',
     'Transactions Today': 'Miamala ya Leo',
     'Setup Check': 'Ukaguzi wa Mfumo',
     'PDO MySQL Driver': 'Kifaa cha PDO MySQL',
@@ -494,6 +495,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initSidebarOverlay();
     initKeyboardShortcuts();
     initTableFilters();
+    initSalesPage();
 });
 
 // ============================================
@@ -1689,6 +1691,175 @@ function initTableFilters() {
     productSearch?.addEventListener('input', () => {
         filterTable('productTable', productSearch.value);
     });
+}
+
+function initSalesPage() {
+    if ((APP_CONFIG.currentPage || '').toLowerCase() !== 'sales') {
+        return;
+    }
+
+    const productsGrid = document.getElementById('salesProductsGrid');
+    const searchInput = document.getElementById('salesProductSearch');
+    const cartItemsEl = document.getElementById('salesCartItems');
+    const subtotalEl = document.getElementById('salesSubtotal');
+    const taxEl = document.getElementById('salesTax');
+    const totalEl = document.getElementById('salesTotal');
+    const chargeBtn = document.getElementById('salesChargeBtn');
+    const clearBtn = document.getElementById('salesClearAll');
+
+    if (!productsGrid || !cartItemsEl || !subtotalEl || !taxEl || !totalEl || !chargeBtn || !clearBtn) {
+        return;
+    }
+
+    const cart = new Map();
+
+    const toNumber = (value) => {
+        const parsed = Number.parseFloat((value || '').toString());
+        return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const formatTsh = (value) => `Tsh ${Math.round(value)}`;
+
+    const addProduct = (id, name, price) => {
+        if (!id || !name) {
+            return;
+        }
+
+        const existing = cart.get(id);
+        if (existing) {
+            existing.qty += 1;
+            cart.set(id, existing);
+        } else {
+            cart.set(id, { id, name, price, qty: 1 });
+        }
+    };
+
+    const getCardModel = (card) => ({
+        id: (card.getAttribute('data-product-id') || '').toString(),
+        name: (card.getAttribute('data-product-name') || '').toString(),
+        price: toNumber(card.getAttribute('data-product-price')),
+    });
+
+    const renderCart = () => {
+        if (cart.size === 0) {
+            cartItemsEl.innerHTML = '<div class="sales-empty-cart">No products selected yet.</div>';
+        } else {
+            const itemsHtml = Array.from(cart.values()).map(item => {
+                const lineTotal = item.price * item.qty;
+                return `
+                    <div class="sales-cart-item" data-cart-id="${escapeHtml(item.id)}">
+                        <div class="sales-cart-item-main">
+                            <div>
+                                <div class="sales-cart-item-name">${escapeHtml(item.name)}</div>
+                                <div class="sales-cart-item-price">${escapeHtml(formatTsh(item.price))} each</div>
+                            </div>
+                            <div class="sales-cart-controls">
+                                <button type="button" data-cart-action="dec" data-cart-id="${escapeHtml(item.id)}">-</button>
+                                <span class="sales-cart-qty">${item.qty}</span>
+                                <button type="button" data-cart-action="inc" data-cart-id="${escapeHtml(item.id)}">+</button>
+                            </div>
+                            <strong class="sales-cart-line-total">${escapeHtml(Math.round(lineTotal).toString())}</strong>
+                            <button type="button" class="sales-remove-item" data-cart-action="remove" data-cart-id="${escapeHtml(item.id)}" title="Remove">
+                                <i class="fa-regular fa-trash-can"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            cartItemsEl.innerHTML = itemsHtml;
+        }
+
+        const subtotal = Array.from(cart.values()).reduce((sum, item) => sum + (item.qty * item.price), 0);
+        const tax = 0;
+        const total = subtotal + tax;
+
+        subtotalEl.textContent = formatTsh(subtotal);
+        taxEl.textContent = formatTsh(tax);
+        totalEl.textContent = formatTsh(total);
+        chargeBtn.textContent = `Charge ${formatTsh(total)}`;
+    };
+
+    productsGrid.addEventListener('click', function(event) {
+        const card = event.target.closest('.sales-product-card');
+        if (!card) {
+            return;
+        }
+
+        const product = getCardModel(card);
+        addProduct(product.id, product.name, product.price);
+        renderCart();
+    });
+
+    cartItemsEl.addEventListener('click', function(event) {
+        const actionTarget = event.target.closest('[data-cart-action]');
+        if (!actionTarget) {
+            return;
+        }
+
+        const action = (actionTarget.getAttribute('data-cart-action') || '').toLowerCase();
+        const id = (actionTarget.getAttribute('data-cart-id') || '').toString();
+        const item = cart.get(id);
+
+        if (!item) {
+            return;
+        }
+
+        if (action === 'inc') {
+            item.qty += 1;
+            cart.set(id, item);
+        }
+
+        if (action === 'dec') {
+            if (item.qty <= 1) {
+                cart.delete(id);
+            } else {
+                item.qty -= 1;
+                cart.set(id, item);
+            }
+        }
+
+        if (action === 'remove') {
+            cart.delete(id);
+        }
+
+        renderCart();
+    });
+
+    searchInput?.addEventListener('input', function() {
+        const term = (searchInput.value || '').toLowerCase().trim();
+        const cards = productsGrid.querySelectorAll('.sales-product-card');
+
+        cards.forEach(card => {
+            const blob = (card.getAttribute('data-product-search') || '').toLowerCase();
+            card.style.display = term === '' || blob.includes(term) ? '' : 'none';
+        });
+    });
+
+    clearBtn.addEventListener('click', function() {
+        cart.clear();
+        renderCart();
+    });
+
+    chargeBtn.addEventListener('click', function() {
+        if (cart.size === 0) {
+            showToast('warning', 'Add at least one product to continue.');
+            return;
+        }
+
+        showNewSaleModal();
+    });
+
+    const initialCards = productsGrid.querySelectorAll('.sales-product-card');
+    initialCards.forEach((card, index) => {
+        if (index > 2) {
+            return;
+        }
+        const product = getCardModel(card);
+        addProduct(product.id, product.name, product.price);
+    });
+
+    renderCart();
 }
 
 function filterTable(tableId, searchTerm) {
