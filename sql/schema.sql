@@ -46,9 +46,7 @@ INSERT INTO customers (name, phone) VALUES
 ('Walk-in Customer', NULL),
 ('Mchina', '255700000111');
 
-INSERT INTO users (name, email, password, role) VALUES
-('Admin User', 'admin@mchongoma.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Admin'),
-('Manager User', 'manager@mchongoma.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Manager');
+-- No default users are seeded in this schema file.
 
 INSERT INTO products (name, sku, stock_qty, reorder_level, unit_price) VALUES
 ('Sugar 1kg', 'SKU-SUG-001', 120, 15, 3800.00),

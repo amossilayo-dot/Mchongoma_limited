@@ -72,26 +72,23 @@ Enter your MySQL password when prompted.
 
 ---
 
-## 🔐 Default Login Credentials
+## 🔐 Initial Admin Account
 
-After importing, use these to login:
+Default users are no longer seeded in schema files.
 
-**Admin Account:**
-- Email: `admin@mchongoma.com`
-- Password: `password`
+After importing, create your first admin account in the importer screen using:
+- Name
+- Email
+- Strong password (minimum 8 characters)
 
-**Manager Account:**
-- Email: `manager@mchongoma.com`
-- Password: `password`
-
-⚠️ **Change these passwords immediately in production!**
+Then sign in from `public/login.php` using the admin account you created.
 
 ---
 
 ## 📊 Sample Data Included
 
 The schema includes sample data for testing:
-- ✅ 2 Users (Admin, Manager)
+- ✅ No default users (create admin during import)
 - ✅ 2 Warehouses (Main, Branch)
 - ✅ 3 Customers (including Walk-in)
 - ✅ 3 Sample Products

@@ -24,15 +24,54 @@ This project provides a POS dashboard interface designed to visually match the s
    - Open phpMyAdmin or MySQL CLI
    - Run `sql/schema.sql`
 3. Set database environment variables if needed:
+   - `APP_ENV` (`production` by default; use `development` for local dev)
    - `DB_HOST` (default `127.0.0.1`)
    - `DB_PORT` (default `3306`)
    - `DB_DATABASE` (default `pos_mchongoma`)
    - `DB_USERNAME` (default `root`)
    - `DB_PASSWORD` (default empty)
+   - `APP_ALLOW_SETUP_TOOLS=1` to allow schema/import check scripts in development
+   - `APP_ALLOW_DEMO_LOGIN=1` only if local/offline demo fallback is intentionally needed
 4. Start Apache + MySQL and open:
    - `http://localhost/pos-php-mchongoma/public/`
 
-If MySQL is unavailable, the page will still render using demo fallback data.
+Demo fallback authentication only works when all of these are true:
+- `APP_ENV` is non-production (`development`, `dev`, `local`, `test`, or `testing`)
+- `APP_ALLOW_DEMO_LOGIN=1`
+- Request is from localhost
+
+Security note:
+- Schema files do not seed default users; create an admin user during installation and store credentials securely.
+
+## Final Deployment Settings
+
+Use these production values:
+- `APP_ENV=production`
+- `APP_DEBUG=0`
+- `APP_ALLOW_SETUP_TOOLS=0`
+- `APP_ALLOW_DEMO_LOGIN=0`
+
+You can start from `.env.production.example`.
+
+## Health Check Endpoint
+
+Endpoint:
+- `/public/health.php`
+
+Behavior:
+- Returns `200` with `status: ok` when required checks pass.
+- Returns `503` with `status: degraded` when checks fail.
+- Localhost requests are allowed by default.
+- Non-local requests require `APP_HEALTHCHECK_TOKEN` and either:
+   - header `X-Healthcheck-Token: <token>`
+   - query `?token=<token>`
+
+It verifies:
+- `APP_DEBUG` is off in production
+- `APP_ALLOW_SETUP_TOOLS` is off in production
+- `APP_ALLOW_DEMO_LOGIN` is off in production
+- `pdo_mysql` extension is loaded
+- database connectivity
 
 ## Push to GitHub
 

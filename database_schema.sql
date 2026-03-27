@@ -304,10 +304,8 @@ CREATE TABLE messages (
 -- Sample Data for Testing
 -- ============================================
 
--- Insert default admin user
-INSERT INTO users (name, email, password, role) VALUES
-('Admin User', 'admin@mchongoma.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Admin'),
-('Manager User', 'manager@mchongoma.com', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Manager');
+-- No default users are seeded here.
+-- Create an admin account during installation/import using a unique password.
 
 -- Insert default warehouse
 INSERT INTO warehouses (name, location) VALUES

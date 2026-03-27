@@ -31,6 +31,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $result = authenticateUser($email, $password);
 
         if (($result['ok'] ?? false) === true) {
+            if (($result['force_password_change'] ?? false) === true) {
+                header('Location: change_password.php');
+                exit;
+            }
+
             $postRedirect = (string) ($_POST['redirect'] ?? 'index.php');
             if ($postRedirect === '' || str_starts_with($postRedirect, 'http://') || str_starts_with($postRedirect, 'https://')) {
                 $postRedirect = 'index.php';
@@ -72,7 +77,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         <h2>Welcome back</h2>
         <p class="login-subtitle">Sign in to continue to your dashboard</p>
 
-        <?php if (!isProductionEnvironment() && isDemoLoginEnabled()): ?>
+        <?php if (canUseDemoLoginFallback()): ?>
             <p class="login-hint" style="margin-top: 0; margin-bottom: 12px;">
                 Offline demo: <strong>admin</strong> / <strong>admin123</strong>
             </p>

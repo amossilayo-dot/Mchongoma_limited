@@ -5,11 +5,90 @@ declare(strict_types=1);
 /**
  * Check if running in production environment
  */
+function getAppEnvironment(): string
+{
+    $raw = getenv('APP_ENV');
+    if (is_string($raw) && trim($raw) !== '') {
+        return strtolower(trim($raw));
+    }
+
+    // Safe local default: if APP_ENV is unset and request is localhost, treat as development.
+    if (isLocalRequest()) {
+        return 'development';
+    }
+
+    return 'production';
+}
+
 function isProductionEnvironment(): bool
 {
-    $env = getenv('APP_ENV') ?: 'development';
-    return in_array($env, ['production', 'prod'], true);
+    return !in_array(getAppEnvironment(), ['development', 'dev', 'local', 'test', 'testing'], true);
 }
+
+function isLocalRequest(): bool
+{
+    if (PHP_SAPI === 'cli') {
+        return true;
+    }
+
+    $remoteAddress = trim((string) ($_SERVER['REMOTE_ADDR'] ?? ''));
+    return in_array($remoteAddress, ['127.0.0.1', '::1'], true);
+}
+
+function isDevelopmentToolAccessAllowed(): bool
+{
+    $allowTools = strtolower(trim((string) (getenv('APP_ALLOW_SETUP_TOOLS') ?: '0')));
+    $isAllowed = in_array($allowTools, ['1', 'true', 'yes', 'on'], true);
+
+    return !isProductionEnvironment() && $isAllowed && isLocalRequest();
+}
+
+function isDebugModeEnabledFromEnvironment(): bool
+{
+    $raw = strtolower(trim((string) (getenv('APP_DEBUG') ?: '0')));
+    return in_array($raw, ['1', 'true', 'yes', 'on'], true);
+}
+
+function isEnvFlagEnabled(string $name): bool
+{
+    $raw = strtolower(trim((string) (getenv($name) ?: '0')));
+    return in_array($raw, ['1', 'true', 'yes', 'on'], true);
+}
+
+function enforceRuntimeSecurityConfiguration(): void
+{
+    if (!isProductionEnvironment()) {
+        return;
+    }
+
+    $violations = [];
+    if (isDebugModeEnabledFromEnvironment()) {
+        $violations[] = 'APP_DEBUG must be disabled in production';
+    }
+    if (isEnvFlagEnabled('APP_ALLOW_SETUP_TOOLS')) {
+        $violations[] = 'APP_ALLOW_SETUP_TOOLS must be disabled in production';
+    }
+    if (isEnvFlagEnabled('APP_ALLOW_DEMO_LOGIN')) {
+        $violations[] = 'APP_ALLOW_DEMO_LOGIN must be disabled in production';
+    }
+
+    if (count($violations) === 0) {
+        return;
+    }
+
+    $message = 'Unsafe runtime configuration: ' . implode('; ', $violations) . '.';
+    error_log($message);
+
+    if (PHP_SAPI === 'cli') {
+        throw new RuntimeException($message);
+    }
+
+    http_response_code(500);
+    header('Content-Type: text/plain; charset=UTF-8');
+    exit('Server configuration error. Contact administrator.');
+}
+
+enforceRuntimeSecurityConfiguration();
 
 function getDatabaseConnection(): PDO
 {

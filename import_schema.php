@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/config/database.php';
 
-if (isProductionEnvironment()) {
+if (!isDevelopmentToolAccessAllowed()) {
     http_response_code(404);
     exit('Not found');
 }
@@ -138,9 +138,63 @@ if (isProductionEnvironment()) {
         $password = '';
         $database = 'pos_mchongoma';
 
-        $action = $_GET['action'] ?? '';
+        $action = (string) ($_GET['action'] ?? '');
 
-        if ($action === 'import') {
+        if ($action === 'create_admin' && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+            echo '<div class="status-box info"><strong>👤 Creating Admin Account...</strong></div>';
+
+            $adminName = trim((string) ($_POST['admin_name'] ?? ''));
+            $adminEmail = trim((string) ($_POST['admin_email'] ?? ''));
+            $adminPassword = (string) ($_POST['admin_password'] ?? '');
+            $adminPasswordConfirm = (string) ($_POST['admin_password_confirm'] ?? '');
+
+            try {
+                if ($adminName === '' || $adminEmail === '' || $adminPassword === '') {
+                    throw new Exception('Name, email, and password are required.');
+                }
+                if (!filter_var($adminEmail, FILTER_VALIDATE_EMAIL)) {
+                    throw new Exception('Provide a valid admin email address.');
+                }
+                if (strlen($adminPassword) < 8) {
+                    throw new Exception('Password must be at least 8 characters.');
+                }
+                if (!hash_equals($adminPassword, $adminPasswordConfirm)) {
+                    throw new Exception('Password confirmation does not match.');
+                }
+
+                $pdo = getDatabaseConnection();
+                $checkStmt = $pdo->prepare('SELECT id FROM users WHERE email = :email LIMIT 1');
+                $checkStmt->execute([':email' => $adminEmail]);
+                if ($checkStmt->fetch()) {
+                    throw new Exception('A user with this email already exists.');
+                }
+
+                $passwordHash = password_hash($adminPassword, PASSWORD_DEFAULT);
+                if ($passwordHash === false) {
+                    throw new Exception('Could not secure password hash.');
+                }
+
+                $insertStmt = $pdo->prepare(
+                    'INSERT INTO users (name, email, password, role) VALUES (:name, :email, :password, :role)'
+                );
+                $insertStmt->execute([
+                    ':name' => $adminName,
+                    ':email' => $adminEmail,
+                    ':password' => $passwordHash,
+                    ':role' => 'Admin',
+                ]);
+
+                echo '<div class="status-box success"><strong>✓ Admin account created successfully!</strong></div>';
+                echo '<a href="public/login.php" class="btn btn-success">🔐 Go to Login</a> ';
+                echo '<a href="import_schema.php" class="btn">🔄 Back to Importer</a>';
+            } catch (Throwable $e) {
+                echo '<div class="status-box error">';
+                echo '<strong>❌ Could not create admin:</strong><br>';
+                echo htmlspecialchars($e->getMessage());
+                echo '</div>';
+                echo '<a href="import_schema.php?action=import" class="btn">← Back</a>';
+            }
+        } elseif ($action === 'import') {
             echo '<div class="status-box info"><strong>📥 Starting Import...</strong></div>';
 
             try {
@@ -187,6 +241,20 @@ if (isProductionEnvironment()) {
 
                 echo '<a href="public/index.php" class="btn btn-success">🚀 Go to Application</a> ';
                 echo '<a href="import_schema.php" class="btn">🔄 Refresh</a>';
+
+                echo '<div class="schema-info">';
+                echo '<strong>🔐 Create Initial Admin User</strong>';
+                echo '<p style="margin-top:8px; margin-bottom:12px;">No default users are seeded. Create your admin account now.</p>';
+                echo '<form method="post" action="?action=create_admin">';
+                echo '<div style="display:grid; gap:10px;">';
+                echo '<input type="text" name="admin_name" placeholder="Admin full name" required style="padding:10px; border:1px solid #ccc; border-radius:6px;">';
+                echo '<input type="email" name="admin_email" placeholder="admin@company.com" required style="padding:10px; border:1px solid #ccc; border-radius:6px;">';
+                echo '<input type="password" name="admin_password" placeholder="Password (min 8 chars)" required minlength="8" style="padding:10px; border:1px solid #ccc; border-radius:6px;">';
+                echo '<input type="password" name="admin_password_confirm" placeholder="Confirm password" required minlength="8" style="padding:10px; border:1px solid #ccc; border-radius:6px;">';
+                echo '<button type="submit" class="btn btn-success" style="width:fit-content;">Create Admin User</button>';
+                echo '</div>';
+                echo '</form>';
+                echo '</div>';
 
             } catch (PDOException $e) {
                 echo '<div class="status-box error">';
@@ -244,6 +312,11 @@ if (isProductionEnvironment()) {
                 <strong>⚠️ Warning:</strong><br>
                 This will DROP the existing database (if any) and create a fresh one with sample data.
                 All existing data will be lost!
+            </div>
+
+            <div class="status-box info">
+                <strong>🔐 Security:</strong><br>
+                Default user passwords are no longer seeded. You will create an admin user after import.
             </div>
 
             <a href="?action=import" class="btn btn-success" onclick="return confirm('Are you sure? This will delete all existing data and create a fresh database!')">

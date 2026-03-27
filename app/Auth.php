@@ -7,6 +7,9 @@ require_once __DIR__ . '/../config/database.php';
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_WINDOW_SECONDS = 600;
 const LOGIN_BLOCK_SECONDS = 600;
+const SEEDED_DEFAULT_PASSWORD_HASHES = [
+    '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi',
+];
 
 function getClientIpAddress(): string
 {
@@ -130,6 +133,11 @@ function currentUser(): ?array
 function requireAuthentication(): void
 {
     if (isAuthenticated()) {
+        $scriptName = basename((string) ($_SERVER['SCRIPT_NAME'] ?? ''));
+        if (isPasswordChangeRequired() && !in_array($scriptName, ['change_password.php', 'logout.php'], true)) {
+            header('Location: change_password.php');
+            exit;
+        }
         return;
     }
 
@@ -173,7 +181,7 @@ function authenticateUser(string $login, string $password): array
     try {
         $pdo = getDatabaseConnection();
     } catch (Throwable $exception) {
-        if (!isProductionEnvironment() && isDemoLoginEnabled()) {
+        if (canUseDemoLoginFallback()) {
             return authenticateDemoFallbackUser($login, $password);
         }
 
@@ -217,6 +225,7 @@ function authenticateUser(string $login, string $password): array
         return ['ok' => false, 'message' => 'Invalid username/email or password.'];
     }
 
+    $requiresPasswordChange = isSeededDefaultPasswordHash((string) $user['password']);
     clearFailedLoginAttempts($login, $pdo);
     session_regenerate_id(true);
     $_SESSION['user'] = [
@@ -225,6 +234,19 @@ function authenticateUser(string $login, string $password): array
         'email' => (string) $user['email'],
         'role' => (string) $user['role'],
     ];
+
+    if ($requiresPasswordChange) {
+        $_SESSION['force_password_change'] = true;
+        logSecurityAuditEvent('login_requires_password_change', 'warning', $login, ['user_id' => (int) $user['id']], $pdo);
+
+        return [
+            'ok' => true,
+            'message' => 'Password change required before continuing.',
+            'force_password_change' => true,
+        ];
+    }
+
+    unset($_SESSION['force_password_change']);
 
     logSecurityAuditEvent('login_success', 'success', $login, ['user_id' => (int) $user['id']], $pdo);
 
@@ -240,7 +262,7 @@ function authenticateDemoFallbackUser(string $login, string $password): array
     if (!in_array($normalizedLogin, $allowedLogins, true) || !hash_equals($expectedPassword, $password)) {
         return [
             'ok' => false,
-            'message' => 'Database is unavailable. For offline demo login use admin / admin123.',
+            'message' => 'Database is unavailable and demo fallback authentication failed.',
         ];
     }
 
@@ -260,6 +282,27 @@ function isDemoLoginEnabled(): bool
 {
     $raw = strtolower(trim((string) (getenv('APP_ALLOW_DEMO_LOGIN') ?: '0')));
     return in_array($raw, ['1', 'true', 'yes', 'on'], true);
+}
+
+function canUseDemoLoginFallback(): bool
+{
+    return !isProductionEnvironment() && isDemoLoginEnabled() && isLocalRequest();
+}
+
+function isPasswordChangeRequired(): bool
+{
+    return isAuthenticated() && ((bool) ($_SESSION['force_password_change'] ?? false));
+}
+
+function isSeededDefaultPasswordHash(string $hash): bool
+{
+    foreach (SEEDED_DEFAULT_PASSWORD_HASHES as $seededHash) {
+        if (hash_equals($seededHash, $hash)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 function logoutUser(): void
@@ -297,6 +340,72 @@ function hasValidLoginCsrfToken(): bool
     $requestToken = (string) ($_POST['csrf_token'] ?? '');
 
     return $sessionToken !== '' && $requestToken !== '' && hash_equals($sessionToken, $requestToken);
+}
+
+function passwordChangeCsrfToken(): string
+{
+    if (empty($_SESSION['password_change_csrf_token'])) {
+        $_SESSION['password_change_csrf_token'] = bin2hex(random_bytes(32));
+    }
+
+    return (string) $_SESSION['password_change_csrf_token'];
+}
+
+function hasValidPasswordChangeCsrfToken(): bool
+{
+    $sessionToken = (string) ($_SESSION['password_change_csrf_token'] ?? '');
+    $requestToken = (string) ($_POST['csrf_token'] ?? '');
+
+    return $sessionToken !== '' && $requestToken !== '' && hash_equals($sessionToken, $requestToken);
+}
+
+function changeAuthenticatedUserPassword(PDO $pdo, int $userId, string $currentPassword, string $newPassword): array
+{
+    $currentPassword = (string) $currentPassword;
+    $newPassword = (string) $newPassword;
+
+    if ($userId <= 0) {
+        return ['ok' => false, 'message' => 'Invalid user account.'];
+    }
+
+    if ($currentPassword === '' || $newPassword === '') {
+        return ['ok' => false, 'message' => 'Current and new password are required.'];
+    }
+
+    if (strlen($newPassword) < 8) {
+        return ['ok' => false, 'message' => 'New password must be at least 8 characters long.'];
+    }
+
+    if (hash_equals($currentPassword, $newPassword)) {
+        return ['ok' => false, 'message' => 'New password must be different from current password.'];
+    }
+
+    $stmt = $pdo->prepare('SELECT password FROM users WHERE id = :id LIMIT 1');
+    $stmt->execute([':id' => $userId]);
+    $row = $stmt->fetch();
+    $storedHash = (string) ($row['password'] ?? '');
+
+    if ($storedHash === '' || !password_verify($currentPassword, $storedHash)) {
+        return ['ok' => false, 'message' => 'Current password is incorrect.'];
+    }
+
+    $newHash = password_hash($newPassword, PASSWORD_DEFAULT);
+    if ($newHash === false) {
+        return ['ok' => false, 'message' => 'Could not secure the new password. Try again.'];
+    }
+
+    $update = $pdo->prepare('UPDATE users SET password = :password WHERE id = :id');
+    $update->execute([
+        ':password' => $newHash,
+        ':id' => $userId,
+    ]);
+
+    unset($_SESSION['force_password_change']);
+    unset($_SESSION['password_change_csrf_token']);
+
+    logSecurityAuditEvent('password_changed', 'success', (string) ($_SESSION['user']['email'] ?? ''), ['user_id' => $userId], $pdo);
+
+    return ['ok' => true, 'message' => null];
 }
 
 function getLoginThrottleKey(string $login): string
