@@ -118,6 +118,8 @@ $saleCustomerOptions = [
 ];
 $allSales = $recentSales;
 $suppliers = [];
+$systemUsers = [];
+$userPermissionOverridesByUser = [];
 $dashboardEodSummary = [
     'totalSales' => 1035400.0,
     'transactions' => 1,
@@ -183,6 +185,7 @@ try {
     $customerCreditRepo = new CustomerCreditRepository($pdo);
 
     ensureCustomerCreditTables($pdo);
+    ensureUserAccountManagementSchema($pdo);
 
     if (isStoreConfigSaveRequest()) {
         $_SESSION['flash_feedback'] = handleStoreConfigSave($pdo, $userRole);
@@ -240,6 +243,33 @@ try {
     ], $customerRepo->getCustomers(500));
     $allSales = $salesRepo->getSales(50);
     $suppliers = (new SuppliersRepository($pdo))->getSuppliers(200);
+    if (canAccessPage('users', $userRole) && hasUsersTable($pdo)) {
+        $usersStmt = $pdo->query(
+            'SELECT id, name, email, role, is_active, created_at
+             FROM users
+             ORDER BY created_at DESC
+             LIMIT 300'
+        );
+        $systemUsers = $usersStmt ? ($usersStmt->fetchAll() ?: []) : [];
+
+        $permissionRowsStmt = $pdo->query(
+            'SELECT user_id, page_key, is_allowed
+             FROM user_page_permissions'
+        );
+        $permissionRows = $permissionRowsStmt ? ($permissionRowsStmt->fetchAll() ?: []) : [];
+        foreach ($permissionRows as $permissionRow) {
+            $userId = (int) ($permissionRow['user_id'] ?? 0);
+            $pageKey = strtolower(trim((string) ($permissionRow['page_key'] ?? '')));
+            if ($userId <= 0 || $pageKey === '') {
+                continue;
+            }
+
+            if (!isset($userPermissionOverridesByUser[$userId]) || !is_array($userPermissionOverridesByUser[$userId])) {
+                $userPermissionOverridesByUser[$userId] = [];
+            }
+            $userPermissionOverridesByUser[$userId][$pageKey] = ((int) ($permissionRow['is_allowed'] ?? 0)) === 1;
+        }
+    }
 
     $todaySummary = $salesRepo->getTodaySummary();
     $eodByMethodStmt = $pdo->prepare(
@@ -600,6 +630,10 @@ function resolveEntityPageKey(string $entity): ?string
         'customer_payment' => 'customers',
         'supplier' => 'suppliers',
         'employee' => 'employees',
+        'user' => 'users',
+        'user_status' => 'users',
+        'user_password_reset' => 'users',
+        'user_permission_override' => 'users',
         'expense' => 'expenses',
         'invoice' => 'invoices',
         'delivery' => 'deliveries',
@@ -623,6 +657,25 @@ function canManageEntityRequest(string $entity, string $userRole): bool
     }
 
     return canAccessPage($pageKey, $userRole);
+}
+
+function normalizeUserRoleInput(string $rawRole): ?string
+{
+    $normalized = strtolower(trim($rawRole));
+    $roles = [
+        'admin' => 'Admin',
+        'manager' => 'Manager',
+        'staff' => 'Staff',
+        'cashier' => 'Cashier',
+    ];
+
+    return $roles[$normalized] ?? null;
+}
+
+function normalizePermissionModeInput(string $rawMode): ?string
+{
+    $mode = strtolower(trim($rawMode));
+    return in_array($mode, ['allow', 'deny', 'default'], true) ? $mode : null;
 }
 
 function ensureCustomerCreditTables(PDO $pdo): void
@@ -1362,6 +1415,52 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                 ]);
                 return ['type' => 'success', 'message' => 'Employee created successfully.'];
 
+            case 'user':
+                if (strtolower(trim($userRole)) !== 'admin') {
+                    throw new RuntimeException('Only administrators can create users.');
+                }
+
+                ensureUserAccountManagementSchema($pdo);
+
+                $name = trim((string) ($_POST['name'] ?? ''));
+                $email = strtolower(trim((string) ($_POST['email'] ?? '')));
+                $password = (string) ($_POST['password'] ?? '');
+                $role = normalizeUserRoleInput((string) ($_POST['role'] ?? ''));
+
+                if ($name === '' || $email === '' || $password === '' || $role === null) {
+                    throw new RuntimeException('Name, email, password, and role are required.');
+                }
+                if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                    throw new RuntimeException('Please provide a valid user email address.');
+                }
+                if (strlen($password) < 8) {
+                    throw new RuntimeException('Password must be at least 8 characters long.');
+                }
+
+                $existsStmt = $pdo->prepare('SELECT id FROM users WHERE email = :email LIMIT 1');
+                $existsStmt->execute([':email' => $email]);
+                if ($existsStmt->fetch()) {
+                    throw new RuntimeException('A user with this email already exists.');
+                }
+
+                $passwordHash = password_hash($password, PASSWORD_DEFAULT);
+                if ($passwordHash === false) {
+                    throw new RuntimeException('Could not secure the user password.');
+                }
+
+                $createStmt = $pdo->prepare(
+                    'INSERT INTO users (name, email, password, role, is_active)
+                     VALUES (:name, :email, :password, :role, 1)'
+                );
+                $createStmt->execute([
+                    ':name' => $name,
+                    ':email' => $email,
+                    ':password' => $passwordHash,
+                    ':role' => $role,
+                ]);
+
+                return ['type' => 'success', 'message' => 'User created and role assigned successfully.'];
+
             case 'expense':
                 (new ExpensesRepository($pdo))->createExpense([
                     'description' => (string) ($_POST['description'] ?? ''),
@@ -1513,6 +1612,185 @@ function handleEntityUpdate(PDO $pdo, string $currentPage, string $userRole): ar
                 ]);
 
                 return ['type' => 'success', 'message' => 'Customer updated successfully.'];
+
+            case 'user':
+                if ($currentPage !== 'users') {
+                    throw new RuntimeException('User role updates are only allowed from the users page.');
+                }
+                if (strtolower(trim($userRole)) !== 'admin') {
+                    throw new RuntimeException('Only administrators can update user privileges.');
+                }
+
+                ensureUserAccountManagementSchema($pdo);
+
+                $targetUserId = (int) ($_POST['id'] ?? 0);
+                $newRole = normalizeUserRoleInput((string) ($_POST['role'] ?? ''));
+                if ($targetUserId <= 0 || $newRole === null) {
+                    throw new RuntimeException('Invalid user update request.');
+                }
+
+                $authUser = currentUser();
+                $currentUserId = (int) (($authUser['id'] ?? 0) ?: 0);
+                if ($currentUserId > 0 && $currentUserId === $targetUserId && $newRole !== 'Admin') {
+                    throw new RuntimeException('You cannot remove your own admin privilege.');
+                }
+
+                $updateStmt = $pdo->prepare('UPDATE users SET role = :role WHERE id = :id');
+                $updateStmt->execute([
+                    ':role' => $newRole,
+                    ':id' => $targetUserId,
+                ]);
+
+                if ($currentUserId > 0 && $currentUserId === $targetUserId && isset($_SESSION['user']) && is_array($_SESSION['user'])) {
+                    $_SESSION['user']['role'] = $newRole;
+                }
+
+                return ['type' => 'success', 'message' => 'User privileges updated successfully.'];
+
+            case 'user_status':
+                if ($currentPage !== 'users') {
+                    throw new RuntimeException('User status updates are only allowed from the users page.');
+                }
+                if (strtolower(trim($userRole)) !== 'admin') {
+                    throw new RuntimeException('Only administrators can update user status.');
+                }
+
+                ensureUserAccountManagementSchema($pdo);
+
+                $targetUserId = (int) ($_POST['id'] ?? 0);
+                $statusRaw = strtolower(trim((string) ($_POST['status'] ?? 'active')));
+                $isActive = $statusRaw === 'active' ? 1 : 0;
+                if ($targetUserId <= 0) {
+                    throw new RuntimeException('Invalid user status update request.');
+                }
+
+                $authUser = currentUser();
+                $currentUserId = (int) (($authUser['id'] ?? 0) ?: 0);
+                if ($currentUserId > 0 && $currentUserId === $targetUserId && $isActive === 0) {
+                    throw new RuntimeException('You cannot deactivate your own account.');
+                }
+
+                $statusStmt = $pdo->prepare('UPDATE users SET is_active = :is_active WHERE id = :id');
+                $statusStmt->execute([
+                    ':is_active' => $isActive,
+                    ':id' => $targetUserId,
+                ]);
+
+                return [
+                    'type' => 'success',
+                    'message' => $isActive === 1
+                        ? 'User account activated successfully.'
+                        : 'User account deactivated successfully.',
+                ];
+
+            case 'user_password_reset':
+                if ($currentPage !== 'users') {
+                    throw new RuntimeException('Password resets are only allowed from the users page.');
+                }
+                if (strtolower(trim($userRole)) !== 'admin') {
+                    throw new RuntimeException('Only administrators can reset user passwords.');
+                }
+
+                $targetUserId = (int) ($_POST['id'] ?? 0);
+                $newPassword = (string) ($_POST['new_password'] ?? '');
+                $confirmPassword = (string) ($_POST['confirm_password'] ?? '');
+
+                if ($targetUserId <= 0) {
+                    throw new RuntimeException('Invalid user password reset request.');
+                }
+                if (strlen($newPassword) < 8) {
+                    throw new RuntimeException('New password must be at least 8 characters long.');
+                }
+                if (!hash_equals($newPassword, $confirmPassword)) {
+                    throw new RuntimeException('Password confirmation does not match.');
+                }
+
+                $newHash = password_hash($newPassword, PASSWORD_DEFAULT);
+                if ($newHash === false) {
+                    throw new RuntimeException('Could not secure the new password.');
+                }
+
+                $resetStmt = $pdo->prepare('UPDATE users SET password = :password WHERE id = :id');
+                $resetStmt->execute([
+                    ':password' => $newHash,
+                    ':id' => $targetUserId,
+                ]);
+
+                return ['type' => 'success', 'message' => 'User password reset successfully.'];
+
+            case 'user_permission_override':
+                if ($currentPage !== 'users') {
+                    throw new RuntimeException('Permission overrides are only allowed from the users page.');
+                }
+                if (strtolower(trim($userRole)) !== 'admin') {
+                    throw new RuntimeException('Only administrators can assign custom permissions.');
+                }
+
+                ensureUserAccountManagementSchema($pdo);
+
+                $targetUserId = (int) ($_POST['id'] ?? 0);
+                if ($targetUserId <= 0) {
+                    throw new RuntimeException('Invalid permission override request.');
+                }
+
+                $allowedPageKeys = array_keys((new PageController())->getPages());
+                $requestedModes = $_POST['permission_mode'] ?? [];
+                if (!is_array($requestedModes)) {
+                    throw new RuntimeException('Invalid permission override payload.');
+                }
+
+                $sessionOverrideUpdates = [];
+                foreach ($requestedModes as $rawPageKey => $rawMode) {
+                    $pageKey = strtolower(trim((string) $rawPageKey));
+                    $mode = normalizePermissionModeInput((string) $rawMode);
+                    if ($pageKey === '' || $mode === null) {
+                        continue;
+                    }
+                    if (!in_array($pageKey, $allowedPageKeys, true)) {
+                        continue;
+                    }
+
+                    if ($mode === 'default') {
+                        $deleteStmt = $pdo->prepare('DELETE FROM user_page_permissions WHERE user_id = :user_id AND page_key = :page_key');
+                        $deleteStmt->execute([
+                            ':user_id' => $targetUserId,
+                            ':page_key' => $pageKey,
+                        ]);
+                        $sessionOverrideUpdates[$pageKey] = null;
+                        continue;
+                    }
+
+                    $isAllowed = $mode === 'allow' ? 1 : 0;
+                    $upsertStmt = $pdo->prepare(
+                        'INSERT INTO user_page_permissions (user_id, page_key, is_allowed)
+                         VALUES (:user_id, :page_key, :is_allowed)
+                         ON DUPLICATE KEY UPDATE is_allowed = VALUES(is_allowed)'
+                    );
+                    $upsertStmt->execute([
+                        ':user_id' => $targetUserId,
+                        ':page_key' => $pageKey,
+                        ':is_allowed' => $isAllowed,
+                    ]);
+                    $sessionOverrideUpdates[$pageKey] = ($isAllowed === 1);
+                }
+
+                $authUser = currentUser();
+                $currentUserId = (int) (($authUser['id'] ?? 0) ?: 0);
+                if ($currentUserId > 0 && $currentUserId === $targetUserId && isset($_SESSION['user']) && is_array($_SESSION['user'])) {
+                    if (!isset($_SESSION['user']['permission_overrides']) || !is_array($_SESSION['user']['permission_overrides'])) {
+                        $_SESSION['user']['permission_overrides'] = [];
+                    }
+
+                    foreach ($sessionOverrideUpdates as $pageKey => $overrideValue) {
+                        if ($overrideValue === null) {
+                            unset($_SESSION['user']['permission_overrides'][$pageKey]);
+                            continue;
+                        }
+                        $_SESSION['user']['permission_overrides'][$pageKey] = (bool) $overrideValue;
+                    }
+                }
+
+                return ['type' => 'success', 'message' => 'User permission override saved successfully.'];
         }
 
         return [
@@ -2973,6 +3251,102 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                 </div>
             </section>
 
+        <?php elseif ($currentPage === 'users'): ?>
+            <section class="page-content">
+                <div class="content-header">
+                    <h2><i class="fa-solid fa-user-shield"></i> Users & Privileges</h2>
+                    <button class="btn btn-primary" data-action="openAddUserModal">
+                        <i class="fa-solid fa-user-plus"></i> Add User
+                    </button>
+                </div>
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Name</th>
+                                <th>Email</th>
+                                <th>Role</th>
+                                <th>Status</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (count($systemUsers) === 0): ?>
+                                <tr>
+                                    <td colspan="7" style="text-align:center; padding: 20px;">
+                                        <i class="fa-solid fa-user-xmark"></i> No users found
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($systemUsers as $systemUser): ?>
+                                    <?php
+                                        $systemUserRole = (string) ($systemUser['role'] ?? 'Staff');
+                                        $isActiveUser = ((int) ($systemUser['is_active'] ?? 1)) === 1;
+                                        $statusLabel = $isActiveUser ? 'Active' : 'Inactive';
+                                        $statusClass = $isActiveUser ? 'success' : 'warning';
+                                        $roleClass = match (strtolower($systemUserRole)) {
+                                            'admin' => 'success',
+                                            'manager' => 'warning',
+                                            default => 'info',
+                                        };
+                                    ?>
+                                    <tr>
+                                        <td><?= (int) ($systemUser['id'] ?? 0) ?></td>
+                                        <td><strong><?= e((string) ($systemUser['name'] ?? '')) ?></strong></td>
+                                        <td><?= e((string) ($systemUser['email'] ?? '')) ?></td>
+                                        <td><span class="status-badge <?= e($roleClass) ?>"><?= e($systemUserRole) ?></span></td>
+                                        <td><span class="status-badge <?= e($statusClass) ?>"><?= e($statusLabel) ?></span></td>
+                                        <td><?= e((string) ($systemUser['created_at'] ?? '')) ?></td>
+                                        <td>
+                                            <button
+                                                class="btn-icon"
+                                                data-action="editUserRole"
+                                                data-value="<?= (int) ($systemUser['id'] ?? 0) ?>"
+                                                data-role="<?= e($systemUserRole) ?>"
+                                                data-name="<?= e((string) ($systemUser['name'] ?? '')) ?>"
+                                                title="Assign Privilege"
+                                            >
+                                                <i class="fa-solid fa-user-gear"></i>
+                                            </button>
+                                            <button
+                                                class="btn-icon"
+                                                data-action="editUserPermissions"
+                                                data-value="<?= (int) ($systemUser['id'] ?? 0) ?>"
+                                                data-name="<?= e((string) ($systemUser['name'] ?? '')) ?>"
+                                                title="Custom Permissions"
+                                            >
+                                                <i class="fa-solid fa-sliders"></i>
+                                            </button>
+                                            <button
+                                                class="btn-icon"
+                                                data-action="resetUserPassword"
+                                                data-value="<?= (int) ($systemUser['id'] ?? 0) ?>"
+                                                data-name="<?= e((string) ($systemUser['name'] ?? '')) ?>"
+                                                title="Reset Password"
+                                            >
+                                                <i class="fa-solid fa-key"></i>
+                                            </button>
+                                            <button
+                                                class="btn-icon"
+                                                data-action="toggleUserStatus"
+                                                data-value="<?= (int) ($systemUser['id'] ?? 0) ?>"
+                                                data-name="<?= e((string) ($systemUser['name'] ?? '')) ?>"
+                                                data-status="<?= $isActiveUser ? 'active' : 'inactive' ?>"
+                                                title="<?= $isActiveUser ? 'Deactivate User' : 'Activate User' ?>"
+                                            >
+                                                <i class="fa-solid <?= $isActiveUser ? 'fa-user-lock' : 'fa-user-check' ?>"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
         <?php elseif ($currentPage === 'expenses'): ?>
             <section class="page-content">
                 <div class="content-header">
@@ -3641,6 +4015,22 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
         'name' => (string) ($item['name'] ?? ''),
         'phone' => (string) ($item['phone'] ?? ''),
     ], $customers),
+    'users' => array_map(static fn(array $item) => [
+        'id' => (int) ($item['id'] ?? 0),
+        'name' => (string) ($item['name'] ?? ''),
+        'email' => (string) ($item['email'] ?? ''),
+        'role' => (string) ($item['role'] ?? ''),
+        'is_active' => ((int) ($item['is_active'] ?? 1)) === 1,
+    ], $systemUsers),
+    'userPermissionOverrides' => $userPermissionOverridesByUser,
+    'availablePages' => array_map(
+        static fn(string $key, array $meta): array => [
+            'key' => $key,
+            'title' => (string) ($meta['title'] ?? $key),
+        ],
+        array_keys($pages),
+        array_values($pages)
+    ),
     'dashboardEodSummary' => [
         'totalSales' => (float) ($dashboardEodSummary['totalSales'] ?? 0),
         'transactions' => (int) ($dashboardEodSummary['transactions'] ?? 0),

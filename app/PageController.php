@@ -16,6 +16,7 @@ final class PageController
         'expenses' => ['title' => 'Expenses', 'icon' => 'fa-credit-card'],
         'appointments' => ['title' => 'Appointments', 'icon' => 'fa-calendar'],
         'employees' => ['title' => 'Employees', 'icon' => 'fa-users'],
+        'users' => ['title' => 'Users', 'icon' => 'fa-user-shield'],
         'settings' => ['title' => 'Store Config', 'icon' => 'fa-gear'],
         'invoices' => ['title' => 'Invoices', 'icon' => 'fa-file-lines'],
         'quotations' => ['title' => 'Quotations', 'icon' => 'fa-rectangle-list'],

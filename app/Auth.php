@@ -158,6 +158,84 @@ function hasUsersTable(PDO $pdo): bool
     return ((int) $stmt->fetch()['total']) === 1;
 }
 
+function ensureUserAccountManagementSchema(PDO $pdo): void
+{
+    static $ensured = false;
+    if ($ensured) {
+        return;
+    }
+
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS user_page_permissions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            page_key VARCHAR(100) NOT NULL,
+            is_allowed TINYINT(1) NOT NULL DEFAULT 1,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_user_page (user_id, page_key),
+            INDEX idx_user_id (user_id),
+            CONSTRAINT fk_user_page_permissions_user
+                FOREIGN KEY (user_id) REFERENCES users(id)
+                ON DELETE CASCADE ON UPDATE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
+
+    $isActiveColumnCheck = $pdo->prepare(
+        'SELECT COUNT(*) AS total
+         FROM information_schema.columns
+         WHERE table_schema = DATABASE()
+           AND table_name = "users"
+           AND column_name = "is_active"'
+    );
+    $isActiveColumnCheck->execute();
+    if ((int) ($isActiveColumnCheck->fetch()['total'] ?? 0) === 0) {
+        $pdo->exec('ALTER TABLE users ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1 AFTER role');
+    }
+
+    $ensured = true;
+}
+
+function getUserPermissionOverrides(PDO $pdo, int $userId): array
+{
+    if ($userId <= 0) {
+        return [];
+    }
+
+    ensureUserAccountManagementSchema($pdo);
+    $stmt = $pdo->prepare(
+        'SELECT page_key, is_allowed
+         FROM user_page_permissions
+         WHERE user_id = :user_id'
+    );
+    $stmt->execute([':user_id' => $userId]);
+    $rows = $stmt->fetchAll() ?: [];
+
+    $overrides = [];
+    foreach ($rows as $row) {
+        $pageKey = strtolower(trim((string) ($row['page_key'] ?? '')));
+        if ($pageKey === '') {
+            continue;
+        }
+        $overrides[$pageKey] = ((int) ($row['is_allowed'] ?? 0)) === 1;
+    }
+
+    return $overrides;
+}
+
+function getRolePagePermissionsMap(): array
+{
+    return [
+        'admin' => ['*'],
+        'manager' => [
+            'dashboard', 'inventory', 'customers', 'suppliers', 'reports', 'receiving',
+            'sales', 'deliveries', 'expenses', 'appointments', 'employees', 'invoices',
+            'quotations', 'purchase-orders', 'returns', 'transactions', 'locations', 'messages', 'security-logs'
+        ],
+        'staff' => ['dashboard', 'inventory', 'customers', 'sales', 'transactions', 'reports'],
+        'cashier' => ['dashboard', 'customers', 'sales', 'transactions'],
+    ];
+}
+
 function authenticateUser(string $login, string $password): array
 {
     $login = trim($login);
@@ -207,8 +285,10 @@ function authenticateUser(string $login, string $password): array
         return ['ok' => false, 'message' => 'Users table is missing. Import database_schema.sql to enable login.'];
     }
 
+    ensureUserAccountManagementSchema($pdo);
+
     $stmt = $pdo->prepare(
-        'SELECT id, name, email, password, role
+        'SELECT id, name, email, password, role, is_active
          FROM users
          WHERE email = :login_email OR name = :login_name
          LIMIT 1'
@@ -225,7 +305,14 @@ function authenticateUser(string $login, string $password): array
         return ['ok' => false, 'message' => 'Invalid username/email or password.'];
     }
 
+    if ((int) ($user['is_active'] ?? 1) !== 1) {
+        registerFailedLoginAttempt($login, $pdo);
+        logSecurityAuditEvent('login_inactive_account', 'blocked', $login, ['user_id' => (int) $user['id']], $pdo);
+        return ['ok' => false, 'message' => 'This account is inactive. Contact an administrator.'];
+    }
+
     $requiresPasswordChange = isSeededDefaultPasswordHash((string) $user['password']);
+    $permissionOverrides = getUserPermissionOverrides($pdo, (int) $user['id']);
     clearFailedLoginAttempts($login, $pdo);
     session_regenerate_id(true);
     $_SESSION['user'] = [
@@ -233,6 +320,7 @@ function authenticateUser(string $login, string $password): array
         'name' => (string) $user['name'],
         'email' => (string) $user['email'],
         'role' => (string) $user['role'],
+        'permission_overrides' => $permissionOverrides,
     ];
 
     if ($requiresPasswordChange) {
@@ -614,20 +702,22 @@ function clearFailedLoginAttempts(string $login, ?PDO $pdo = null): void
 
 function canAccessPage(string $page, string $role): bool
 {
+    $page = strtolower(trim($page));
     $role = strtolower(trim($role));
 
-    $permissions = [
-        'admin' => ['*'],
-        'manager' => [
-            'dashboard', 'inventory', 'customers', 'suppliers', 'reports', 'receiving',
-            'sales', 'deliveries', 'expenses', 'appointments', 'employees', 'invoices',
-            'quotations', 'purchase-orders', 'returns', 'transactions', 'locations', 'messages', 'security-logs'
-        ],
-        'staff' => ['dashboard', 'inventory', 'customers', 'sales', 'transactions', 'reports'],
-        'cashier' => ['dashboard', 'customers', 'sales', 'transactions'],
-    ];
+    $permissions = getRolePagePermissionsMap();
 
     $allowed = $permissions[$role] ?? ['dashboard'];
+
+    $authUser = currentUser();
+    $overrides = is_array($authUser)
+        ? (array) (($authUser['permission_overrides'] ?? []) ?: [])
+        : [];
+    $overrideKey = strtolower($page);
+
+    if (array_key_exists($overrideKey, $overrides)) {
+        return ((bool) $overrides[$overrideKey]) === true;
+    }
 
     return in_array('*', $allowed, true) || in_array($page, $allowed, true);
 }

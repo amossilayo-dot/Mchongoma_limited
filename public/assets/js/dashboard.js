@@ -813,6 +813,7 @@ function initActionBindings() {
       showAddCustomerModal,
       openAddSupplierModal,
       openAddEmployeeModal,
+      openAddUserModal,
       openAddExpenseModal,
       openAddInvoiceModal,
       openAddDeliveryModal,
@@ -888,6 +889,32 @@ function initActionBindings() {
 
     if (action === "viewReceipt") {
       viewReceipt(value);
+      return;
+    }
+
+    if (action === "editUserRole") {
+      const role = target.getAttribute("data-role") || "Staff";
+      const name = target.getAttribute("data-name") || "User";
+      editUserRole(parseInt(value, 10), role, name);
+      return;
+    }
+
+    if (action === "editUserPermissions") {
+      const name = target.getAttribute("data-name") || "User";
+      editUserPermissions(parseInt(value, 10), name);
+      return;
+    }
+
+    if (action === "toggleUserStatus") {
+      const name = target.getAttribute("data-name") || "User";
+      const status = target.getAttribute("data-status") || "active";
+      toggleUserStatus(parseInt(value, 10), status, name);
+      return;
+    }
+
+    if (action === "resetUserPassword") {
+      const name = target.getAttribute("data-name") || "User";
+      resetUserPassword(parseInt(value, 10), name);
       return;
     }
 
@@ -1450,6 +1477,25 @@ function openEntityModal(config) {
   const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
   const fieldsMarkup = config.fields
     .map((field) => {
+      if (field.type === "select") {
+        const optionsMarkup = (field.options || [])
+          .map((option) => {
+            const optionValue = escapeHtml(option.value || "");
+            const optionLabel = escapeHtml(option.label || option.value || "");
+            return `<option value="${optionValue}">${optionLabel}</option>`;
+          })
+          .join("");
+
+        return `
+                <div class="form-group">
+                    <label>${field.label}</label>
+                    <select name="${field.name}" ${field.required ? "required" : ""}>
+                        ${optionsMarkup}
+                    </select>
+                </div>
+            `;
+      }
+
       if (field.type === "textarea") {
         return `
                 <div class="form-group">
@@ -1568,6 +1614,251 @@ function openAddEmployeeModal() {
       },
     ],
   });
+}
+
+function openAddUserModal() {
+  openEntityModal({
+    key: "user",
+    page: "users",
+    entity: "user",
+    title: "Add User",
+    entityName: "User",
+    submitText: "Create User",
+    successMessage: "User created successfully!",
+    fields: [
+      {
+        label: "Full Name",
+        name: "name",
+        required: true,
+        placeholder: "Enter user full name",
+      },
+      {
+        label: "Email",
+        name: "email",
+        type: "email",
+        required: true,
+        placeholder: "user@example.com",
+      },
+      {
+        label: "Password",
+        name: "password",
+        type: "password",
+        required: true,
+        placeholder: "At least 8 characters",
+      },
+      {
+        label: "Privilege (Role)",
+        name: "role",
+        type: "select",
+        required: true,
+        options: [
+          { value: "Admin", label: "Admin" },
+          { value: "Manager", label: "Manager" },
+          { value: "Staff", label: "Staff" },
+          { value: "Cashier", label: "Cashier" },
+        ],
+      },
+    ],
+  });
+}
+
+function editUserRole(userId, currentRole, userName) {
+  if (!Number.isInteger(userId) || userId <= 0) {
+    showToast("error", "Invalid user ID");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const safeRole = escapeHtml(currentRole || "Staff");
+  const safeName = escapeHtml(userName || "User");
+  const selected = String(currentRole || "Staff").toLowerCase();
+  const roleOptions = ["Admin", "Manager", "Staff", "Cashier"]
+    .map((role) => {
+      const roleEscaped = escapeHtml(role);
+      const isSelected = role.toLowerCase() === selected ? "selected" : "";
+      return `<option value="${roleEscaped}" ${isSelected}>${roleEscaped}</option>`;
+    })
+    .join("");
+
+  const content = `
+        <form id="editUserRoleForm" method="POST" action="?page=users">
+            <input type="hidden" name="action" value="update_entity">
+            <input type="hidden" name="entity" value="user">
+            <input type="hidden" name="id" value="${userId}">
+            <input type="hidden" name="csrf_token" value="${csrfToken}">
+            <div class="form-group">
+                <label>User</label>
+                <input type="text" value="${safeName}" readonly>
+            </div>
+            <div class="form-group">
+                <label>Current Role</label>
+                <input type="text" value="${safeRole}" readonly>
+            </div>
+            <div class="form-group">
+                <label>Assign New Privilege (Role)</label>
+                <select name="role" required>
+                    ${roleOptions}
+                </select>
+            </div>
+        </form>
+    `;
+
+  openModal("Assign User Privilege", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: "Save Changes",
+      class: "btn-primary",
+      onclick: 'document.getElementById("editUserRoleForm").requestSubmit()',
+    },
+  ]);
+}
+
+function editUserPermissions(userId, userName) {
+  if (!Number.isInteger(userId) || userId <= 0) {
+    showToast("error", "Invalid user ID");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const safeName = escapeHtml(userName || "User");
+  const pages = Array.isArray(APP_CONFIG.availablePages)
+    ? APP_CONFIG.availablePages
+    : [];
+  const rawOverrides = APP_CONFIG.userPermissionOverrides || {};
+  const userOverrides =
+    rawOverrides[userId] || rawOverrides[String(userId)] || {};
+
+  const pageOptions = pages
+    .map((page) => {
+      const key = escapeHtml(page.key || "");
+      const title = escapeHtml(page.title || page.key || "");
+      const currentValue = Object.prototype.hasOwnProperty.call(
+        userOverrides,
+        page.key,
+      )
+        ? userOverrides[page.key]
+          ? "allow"
+          : "deny"
+        : "default";
+
+      return `
+        <div class="form-group" style="margin-bottom:10px;">
+            <label style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
+                <span>${title}</span>
+                <select name="permission_mode[${key}]" style="max-width:160px;">
+                    <option value="default" ${currentValue === "default" ? "selected" : ""}>Role Default</option>
+                    <option value="allow" ${currentValue === "allow" ? "selected" : ""}>Allow</option>
+                    <option value="deny" ${currentValue === "deny" ? "selected" : ""}>Deny</option>
+                </select>
+            </label>
+            <input type="hidden" name="page_keys[]" value="${key}">
+        </div>
+      `;
+    })
+    .join("");
+
+  const content = `
+    <form id="editUserPermissionsForm" method="POST" action="?page=users">
+      <input type="hidden" name="action" value="update_entity">
+      <input type="hidden" name="entity" value="user_permission_override">
+      <input type="hidden" name="id" value="${userId}">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <div class="form-group">
+        <label>User</label>
+        <input type="text" value="${safeName}" readonly>
+      </div>
+      <p style="margin:0 0 10px 0; color:#6B7280;">Set page access overrides for this user. Role Default keeps standard role permissions.</p>
+      <div style="max-height:320px; overflow:auto; padding-right:6px;">
+        ${pageOptions}
+      </div>
+    </form>
+  `;
+
+  openModal("Custom Permissions", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: "Save Permissions",
+      class: "btn-primary",
+      onclick:
+        'document.getElementById("editUserPermissionsForm").requestSubmit()',
+    },
+  ]);
+}
+
+function toggleUserStatus(userId, currentStatus, userName) {
+  if (!Number.isInteger(userId) || userId <= 0) {
+    showToast("error", "Invalid user ID");
+    return;
+  }
+
+  const nextStatus =
+    String(currentStatus || "active").toLowerCase() === "active"
+      ? "inactive"
+      : "active";
+  const safeName = escapeHtml(userName || "User");
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const actionLabel = nextStatus === "active" ? "Activate" : "Deactivate";
+
+  const content = `
+    <form id="toggleUserStatusForm" method="POST" action="?page=users">
+      <input type="hidden" name="action" value="update_entity">
+      <input type="hidden" name="entity" value="user_status">
+      <input type="hidden" name="id" value="${userId}">
+      <input type="hidden" name="status" value="${nextStatus}">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <p>Are you sure you want to ${actionLabel.toLowerCase()} <strong>${safeName}</strong>?</p>
+    </form>
+  `;
+
+  openModal(`${actionLabel} User`, content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: actionLabel,
+      class: nextStatus === "active" ? "btn-primary" : "btn-danger",
+      onclick:
+        'document.getElementById("toggleUserStatusForm").requestSubmit()',
+    },
+  ]);
+}
+
+function resetUserPassword(userId, userName) {
+  if (!Number.isInteger(userId) || userId <= 0) {
+    showToast("error", "Invalid user ID");
+    return;
+  }
+
+  const safeName = escapeHtml(userName || "User");
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const content = `
+    <form id="resetUserPasswordForm" method="POST" action="?page=users">
+      <input type="hidden" name="action" value="update_entity">
+      <input type="hidden" name="entity" value="user_password_reset">
+      <input type="hidden" name="id" value="${userId}">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <div class="form-group">
+        <label>User</label>
+        <input type="text" value="${safeName}" readonly>
+      </div>
+      <div class="form-group">
+        <label>New Password</label>
+        <input type="password" name="new_password" minlength="8" required placeholder="At least 8 characters">
+      </div>
+      <div class="form-group">
+        <label>Confirm Password</label>
+        <input type="password" name="confirm_password" minlength="8" required placeholder="Repeat password">
+      </div>
+    </form>
+  `;
+
+  openModal("Reset User Password", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: "Reset Password",
+      class: "btn-primary",
+      onclick:
+        'document.getElementById("resetUserPasswordForm").requestSubmit()',
+    },
+  ]);
 }
 
 function openAddExpenseModal() {
