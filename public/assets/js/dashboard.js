@@ -495,6 +495,42 @@ function getCurrentLanguage() {
   return localStorage.getItem("pos_language") === "sw" ? "sw" : "en";
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function replaceTranslatedSegment(source, search, replacement) {
+  if (!search) {
+    return source;
+  }
+
+  const startsWithAlphaNum = /[A-Za-z0-9]/.test(search.charAt(0));
+  const endsWithAlphaNum = /[A-Za-z0-9]/.test(search.charAt(search.length - 1));
+  const escapedSearch = escapeRegExp(search);
+
+  if (!startsWithAlphaNum && !endsWithAlphaNum) {
+    return source.split(search).join(replacement);
+  }
+
+  if (startsWithAlphaNum && endsWithAlphaNum) {
+    const regex = new RegExp(
+      `(^|[^A-Za-z0-9])${escapedSearch}([^A-Za-z0-9]|$)`,
+      "g",
+    );
+    return source.replace(regex, (_, leading, trailing) => {
+      return `${leading}${replacement}${trailing}`;
+    });
+  }
+
+  if (startsWithAlphaNum) {
+    const regex = new RegExp(`(^|[^A-Za-z0-9])${escapedSearch}`, "g");
+    return source.replace(regex, (_, leading) => `${leading}${replacement}`);
+  }
+
+  const regex = new RegExp(`${escapedSearch}([^A-Za-z0-9]|$)`, "g");
+  return source.replace(regex, (_, trailing) => `${replacement}${trailing}`);
+}
+
 function translateValue(value, targetLang) {
   if (!value || typeof value !== "string") {
     return value;
@@ -506,7 +542,7 @@ function translateValue(value, targetLang) {
 
   let translated = value;
   I18N_KEYS_SORTED.forEach((en) => {
-    translated = translated.split(en).join(I18N_TEXT[en]);
+    translated = replaceTranslatedSegment(translated, en, I18N_TEXT[en]);
   });
 
   return translated;
@@ -2734,15 +2770,41 @@ function initSalesPage() {
       return;
     }
 
+    const normalizedCustomers = customers
+      .filter((customer) => customer && typeof customer === "object")
+      .map((customer) => ({
+        id: String(customer.id ?? "").trim(),
+        name: String(customer.name ?? "").trim(),
+      }))
+      .filter((customer) => customer.name !== "");
+
+    const existingWalkInIndex = normalizedCustomers.findIndex(
+      (customer) => customer.name.toLowerCase() === "walk-in customer",
+    );
+    const walkInCustomer =
+      existingWalkInIndex >= 0
+        ? normalizedCustomers[existingWalkInIndex]
+        : {
+            id: "1",
+            name: "Walk-in Customer",
+          };
+
+    const checkoutCustomers = [
+      walkInCustomer,
+      ...normalizedCustomers.filter(
+        (customer, index) => index !== existingWalkInIndex,
+      ),
+    ];
+
     const customerOptions =
-      customers.length > 0
-        ? customers
+      checkoutCustomers.length > 0
+        ? checkoutCustomers
             .map(
-              (c) =>
-                `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name || "")}</option>`,
+              (customer) =>
+                `<option value="${escapeHtml(customer.id)}"${customer.id === walkInCustomer.id ? " selected" : ""}>${escapeHtml(customer.name)}</option>`,
             )
             .join("")
-        : '<option value="1">Walk-in Customer</option>';
+        : '<option value="1" selected>Walk-in Customer</option>';
 
     const paymentIconFor = (option) => {
       const key = (option?.key || "").toLowerCase();
@@ -2803,7 +2865,7 @@ function initSalesPage() {
 
                 <div class="form-group">
                     <label><i class="fa-regular fa-circle-user"></i> Customer</label>
-                    <select name="customer_id" required>${customerOptions}</select>
+                    <select id="checkoutCustomerSelect" name="customer_id" required>${customerOptions}</select>
                 </div>
 
                 <div class="sales-checkout-items" id="checkoutItemsWrap">${cartLines}</div>
@@ -2849,6 +2911,7 @@ function initSalesPage() {
     openModal("Checkout", content, [], { modalClass: "modal-checkout" });
 
     const form = document.getElementById("salesCheckoutForm");
+    const customerSelect = document.getElementById("checkoutCustomerSelect");
     const gatewayInput = document.getElementById("checkoutGateway");
     const methodInput = document.getElementById("checkoutPaymentMethod");
     const providerInput = document.getElementById("checkoutMobileProvider");
@@ -2931,6 +2994,10 @@ function initSalesPage() {
 
     if (cartJsonInput) {
       cartJsonInput.value = JSON.stringify(toCartPayload());
+    }
+
+    if (customerSelect) {
+      customerSelect.value = walkInCustomer.id;
     }
 
     paymentGrid?.addEventListener("click", (event) => {

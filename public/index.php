@@ -118,6 +118,7 @@ $saleCustomerOptions = [
 ];
 $allSales = $recentSales;
 $suppliers = [];
+$employees = [];
 $systemUsers = [];
 $userPermissionOverridesByUser = [];
 $dashboardEodSummary = [
@@ -243,6 +244,9 @@ try {
     ], $customerRepo->getCustomers(500));
     $allSales = $salesRepo->getSales(50);
     $suppliers = (new SuppliersRepository($pdo))->getSuppliers(200);
+    if (canAccessPage('employees', $userRole)) {
+        $employees = (new EmployeesRepository($pdo))->getEmployees(300);
+    }
     if (canAccessPage('users', $userRole) && hasUsersTable($pdo)) {
         $usersStmt = $pdo->query(
             'SELECT id, name, email, role, is_active, created_at
@@ -3241,11 +3245,34 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                             </tr>
                         </thead>
                         <tbody>
-                            <tr>
-                                <td colspan="8" style="text-align:center; padding: 20px;">
-                                    <i class="fa-solid fa-users-slash"></i> No employees added yet
-                                </td>
-                            </tr>
+                            <?php if (count($employees) === 0): ?>
+                                <tr>
+                                    <td colspan="8" style="text-align:center; padding: 20px;">
+                                        <i class="fa-solid fa-users-slash"></i> No employees added yet
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($employees as $employee): ?>
+                                    <?php
+                                        $employeeStatus = trim((string) ($employee['status'] ?? 'Active'));
+                                        $employeeStatusClass = strtolower($employeeStatus) === 'active' ? 'success' : 'warning';
+                                    ?>
+                                    <tr>
+                                        <td><?= (int) ($employee['id'] ?? 0) ?></td>
+                                        <td><strong><?= e((string) ($employee['name'] ?? '')) ?></strong></td>
+                                        <td><?= e((string) (($employee['position'] ?? '') !== '' ? $employee['position'] : 'N/A')) ?></td>
+                                        <td><?= e((string) (($employee['phone'] ?? '') !== '' ? $employee['phone'] : 'N/A')) ?></td>
+                                        <td><?= e((string) (($employee['email'] ?? '') !== '' ? $employee['email'] : 'N/A')) ?></td>
+                                        <td><strong>Tsh <?= moneyFormat((float) ($employee['salary'] ?? 0)) ?></strong></td>
+                                        <td><span class="status-badge <?= e($employeeStatusClass) ?>"><?= e($employeeStatus) ?></span></td>
+                                        <td>
+                                            <button class="btn-icon" title="View">
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
