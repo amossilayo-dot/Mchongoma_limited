@@ -938,6 +938,17 @@ function initActionBindings() {
       return;
     }
 
+    if (action === "viewReceiving") {
+      viewReceiving(parseInt(value, 10));
+      return;
+    }
+
+    if (action === "updateReceivingStatus") {
+      const status = target.getAttribute("data-status") || "";
+      updateReceivingStatus(parseInt(value, 10), status);
+      return;
+    }
+
     if (action === "printCustomerStatement") {
       printCustomerStatement(parseInt(value, 10));
       return;
@@ -2203,30 +2214,293 @@ function openAddDeliveryModal() {
 }
 
 function openAddReceivingModal() {
-  openEntityModal({
-    key: "receiving",
-    page: "receiving",
-    entity: "receiving",
-    title: "Record Receiving",
-    entityName: "Receiving",
-    submitText: "Save Receiving",
-    successMessage: "Receiving record saved successfully!",
-    fields: [
-      {
-        label: "Supplier ID",
-        name: "supplier_id",
-        type: "number",
-        required: true,
-        placeholder: "Enter supplier ID",
-      },
-      {
-        label: "Amount (Tsh)",
-        name: "amount",
-        type: "number",
-        placeholder: "Enter amount",
-      },
-    ],
+  const suppliers = Array.isArray(APP_CONFIG.suppliers)
+    ? APP_CONFIG.suppliers
+    : [];
+  const activeSuppliers = suppliers.filter(
+    (supplier) =>
+      String(supplier?.status || "Active").toLowerCase() !== "inactive",
+  );
+  const supplierOptions =
+    activeSuppliers.length > 0
+      ? activeSuppliers
+          .map(
+            (supplier) =>
+              `<option value="${escapeHtml(String(supplier.id ?? ""))}">${escapeHtml(String(supplier.name ?? "Supplier"))}</option>`,
+          )
+          .join("")
+      : '<option value="">No suppliers available</option>';
+
+  const products = Array.isArray(APP_CONFIG.inventoryProducts)
+    ? APP_CONFIG.inventoryProducts
+    : [];
+  const productOptions = products
+    .map(
+      (product) =>
+        `<option value="${escapeHtml(String(product.id ?? ""))}">${escapeHtml(String(product.name ?? "Product"))}</option>`,
+    )
+    .join("");
+
+  const productSearchOptions = products
+    .map((product) => {
+      const productId = String(product.id ?? "").trim();
+      const productName = String(product.name ?? "Product").trim();
+      const productSku = String(product.sku ?? "").trim();
+      const label = productSku
+        ? `${productId} - ${productName} (${productSku})`
+        : `${productId} - ${productName}`;
+      return `<option value="${escapeHtml(label)}"></option>`;
+    })
+    .join("");
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const content = `
+    <form id="receivingForm" method="POST" action="?page=receiving">
+      <input type="hidden" name="action" value="create_entity">
+      <input type="hidden" name="entity" value="receiving">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <input type="hidden" name="items_json" id="receivingItemsJson" value="[]">
+
+      <div class="form-group">
+        <label>Supplier</label>
+        <select name="supplier_id" required>
+          <option value="">Select supplier</option>
+          ${supplierOptions}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Status</label>
+        <select name="status" required>
+          <option value="Pending" selected>Pending</option>
+          <option value="Received">Received</option>
+          <option value="Completed">Completed</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+          <span>Amount (Tsh)</span>
+          <button type="button" id="receivingUseCalculatedBtn" class="btn btn-secondary" style="padding:6px 10px; font-size:12px;">Use Calculated</button>
+        </label>
+        <input type="number" name="amount" id="receivingAmount" min="0" step="0.01" value="0">
+        <small id="receivingCalculatedHint" style="display:block; margin-top:6px; color:#6B7280;">Calculated from items: Tsh 0</small>
+      </div>
+
+      <div class="form-group">
+        <label>Items</label>
+        <datalist id="receivingProductDatalist">
+          ${productSearchOptions}
+        </datalist>
+        <small style="display:block; margin-bottom:8px; color:#6B7280;">
+          Product search accepts ID or name. The two 0 fields are Rejected Qty and Unit Cost.
+        </small>
+        <div id="receivingItemsContainer" style="display:grid; gap:8px;"></div>
+        <button type="button" class="btn btn-secondary" id="addReceivingItemBtn" style="margin-top:8px;">
+          <i class="fa-solid fa-plus"></i> Add Item
+        </button>
+      </div>
+    </form>
+  `;
+
+  openModal("Record Receiving", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: "Save Receiving",
+      class: "btn-primary",
+      onclick: 'document.getElementById("receivingForm").requestSubmit()',
+    },
+  ]);
+
+  const form = document.getElementById("receivingForm");
+  const itemsContainer = document.getElementById("receivingItemsContainer");
+  const addItemBtn = document.getElementById("addReceivingItemBtn");
+  const amountInput = document.getElementById("receivingAmount");
+  const itemsJsonInput = document.getElementById("receivingItemsJson");
+  const calculatedHint = document.getElementById("receivingCalculatedHint");
+  const useCalculatedBtn = document.getElementById("receivingUseCalculatedBtn");
+
+  if (
+    !form ||
+    !itemsContainer ||
+    !addItemBtn ||
+    !amountInput ||
+    !itemsJsonInput ||
+    !calculatedHint ||
+    !useCalculatedBtn
+  ) {
+    return;
+  }
+
+  const parseProductIdFromSearch = (rawValue) => {
+    const value = String(rawValue || "").trim();
+    if (value === "") {
+      return 0;
+    }
+
+    if (/^\d+$/.test(value)) {
+      return Number.parseInt(value, 10);
+    }
+
+    const idMatch = value.match(/^(\d+)\s*-/);
+    if (idMatch) {
+      return Number.parseInt(idMatch[1], 10);
+    }
+
+    const normalized = value.toLowerCase();
+    const matchedProduct = products.find(
+      (product) =>
+        String(product?.name || "")
+          .trim()
+          .toLowerCase() === normalized,
+    );
+    return matchedProduct
+      ? Number.parseInt(String(matchedProduct.id || "0"), 10)
+      : 0;
+  };
+
+  const syncRowProductId = (row) => {
+    const searchInput = row.querySelector(".receiving-product-search");
+    const idInput = row.querySelector(".receiving-product");
+    if (!searchInput || !idInput) {
+      return;
+    }
+
+    const parsedId = parseProductIdFromSearch(searchInput.value);
+    idInput.value = parsedId > 0 ? String(parsedId) : "";
+  };
+
+  const buildItemRow = () => {
+    const row = document.createElement("div");
+    row.className = "receiving-item-row";
+    row.style.display = "grid";
+    row.style.gridTemplateColumns = "2fr 1fr 1fr 1fr auto";
+    row.style.gap = "8px";
+    row.innerHTML = `
+      <input type="text" class="receiving-product-search" list="receivingProductDatalist" placeholder="Search product by ID/name" required>
+      <select class="receiving-product" required style="display:none;">
+        <option value="">Product</option>
+        ${productOptions}
+      </select>
+      <input type="number" class="receiving-qty" min="0" step="1" placeholder="Received Qty" value="1" required>
+      <input type="number" class="receiving-reject" min="0" step="1" placeholder="Rejected Qty" value="0" title="Rejected quantity">
+      <input type="number" class="receiving-cost" min="0" step="0.01" placeholder="Unit Cost" value="0" title="Unit cost per received item" required>
+      <button type="button" class="btn-icon danger receiving-remove" title="Remove"><i class="fa-solid fa-trash"></i></button>
+    `;
+    return row;
+  };
+
+  const serializeItems = () => {
+    const rows = Array.from(
+      itemsContainer.querySelectorAll(".receiving-item-row"),
+    );
+    const items = [];
+    let total = 0;
+
+    rows.forEach((row) => {
+      const productInput = row.querySelector(".receiving-product");
+      syncRowProductId(row);
+      const qtyInput = row.querySelector(".receiving-qty");
+      const rejectInput = row.querySelector(".receiving-reject");
+      const costInput = row.querySelector(".receiving-cost");
+
+      const productId = Number.parseInt(String(productInput?.value || "0"), 10);
+      const qtyReceived = Math.max(
+        0,
+        Number.parseInt(String(qtyInput?.value || "0"), 10) || 0,
+      );
+      const qtyRejected = Math.max(
+        0,
+        Number.parseInt(String(rejectInput?.value || "0"), 10) || 0,
+      );
+      const unitCost = Math.max(
+        0,
+        Number.parseFloat(String(costInput?.value || "0")) || 0,
+      );
+
+      if (productId > 0 && qtyReceived + qtyRejected > 0) {
+        const lineTotal = qtyReceived * unitCost;
+        total += lineTotal;
+        items.push({
+          product_id: productId,
+          quantity_received: qtyReceived,
+          quantity_rejected: qtyRejected,
+          unit_cost: unitCost,
+          line_total: lineTotal,
+        });
+      }
+    });
+
+    const roundedTotal = Number(total.toFixed(2));
+    if (amountInput.dataset.manual !== "1") {
+      amountInput.value = String(roundedTotal);
+    }
+    calculatedHint.textContent = `Calculated from items: Tsh ${formatMoney(roundedTotal)}`;
+    itemsJsonInput.value = JSON.stringify(items);
+    return { items, total: roundedTotal };
+  };
+
+  const addRow = () => {
+    const row = buildItemRow();
+    itemsContainer.appendChild(row);
+    serializeItems();
+  };
+
+  addItemBtn.addEventListener("click", addRow);
+
+  itemsContainer.addEventListener("click", (event) => {
+    const removeBtn = event.target.closest(".receiving-remove");
+    if (!removeBtn) {
+      return;
+    }
+
+    const row = removeBtn.closest(".receiving-item-row");
+    if (row) {
+      row.remove();
+      serializeItems();
+    }
   });
+
+  itemsContainer.addEventListener("input", () => {
+    serializeItems();
+  });
+
+  amountInput.addEventListener("input", () => {
+    amountInput.dataset.manual = "1";
+  });
+
+  useCalculatedBtn.addEventListener("click", () => {
+    const { total } = serializeItems();
+    amountInput.dataset.manual = "0";
+    amountInput.value = String(total);
+  });
+
+  form.addEventListener("submit", (event) => {
+    const supplierInput = form.querySelector('select[name="supplier_id"]');
+    const supplierId = String(supplierInput?.value || "").trim();
+    const payload = serializeItems();
+    const items = payload.items;
+    const total = Number.parseFloat(String(amountInput.value || "0"));
+
+    if (supplierId === "") {
+      event.preventDefault();
+      showToast("warning", "Please select a supplier.");
+      return;
+    }
+
+    if (items.length === 0) {
+      event.preventDefault();
+      showToast("warning", "Add at least one receiving item.");
+      return;
+    }
+
+    if (!Number.isFinite(total) || total <= 0) {
+      event.preventDefault();
+      showToast("warning", "Receiving total must be greater than zero.");
+    }
+  });
+
+  addRow();
 }
 
 function openAddQuotationModal() {
@@ -3544,6 +3818,150 @@ function deleteProduct(id) {
 function confirmDeleteProduct(id) {
   closeModal();
   showToast("success", "Product deleted successfully!");
+}
+
+function viewReceiving(id) {
+  const receivingId = Number.parseInt(id, 10);
+  if (!Number.isFinite(receivingId) || receivingId <= 0) {
+    showToast("error", "Invalid receiving ID");
+    return;
+  }
+
+  const records = Array.isArray(APP_CONFIG.receivingRecords)
+    ? APP_CONFIG.receivingRecords
+    : [];
+  const record = records.find(
+    (item) => Number.parseInt(String(item?.id || "0"), 10) === receivingId,
+  );
+
+  if (!record) {
+    showToast("error", "Receiving record not found");
+    return;
+  }
+
+  const items = Array.isArray(record.items) ? record.items : [];
+  const itemRows =
+    items.length === 0
+      ? '<tr><td colspan="5" style="text-align:center; color:#6b7280;">No receiving items saved.</td></tr>'
+      : items
+          .map((item) => {
+            const product = escapeHtml(String(item.product_name || "Product"));
+            const qtyReceived = Number.parseInt(
+              String(item.quantity_received || "0"),
+              10,
+            );
+            const qtyRejected = Number.parseInt(
+              String(item.quantity_rejected || "0"),
+              10,
+            );
+            const unitCost = Number.parseFloat(String(item.unit_cost || "0"));
+            const lineTotal = Number.parseFloat(String(item.line_total || "0"));
+            return `
+              <tr>
+                <td>${product}</td>
+                <td>${escapeHtml(String(Number.isFinite(qtyReceived) ? qtyReceived : 0))}</td>
+                <td>${escapeHtml(String(Number.isFinite(qtyRejected) ? qtyRejected : 0))}</td>
+                <td>Tsh ${escapeHtml(formatMoney(Number.isFinite(unitCost) ? unitCost : 0))}</td>
+                <td><strong>Tsh ${escapeHtml(formatMoney(Number.isFinite(lineTotal) ? lineTotal : 0))}</strong></td>
+              </tr>
+            `;
+          })
+          .join("");
+
+  const receivingNo = escapeHtml(String(record.receiving_no || "-"));
+  const supplierName = escapeHtml(String(record.supplier_name || "-"));
+  const status = escapeHtml(String(record.status || "Pending"));
+  const createdAtRaw = String(record.created_at || "");
+  const createdAt = createdAtRaw
+    ? new Date(createdAtRaw.replace(" ", "T"))
+    : null;
+  const createdLabel =
+    createdAt instanceof Date && !Number.isNaN(createdAt.getTime())
+      ? escapeHtml(createdAt.toLocaleString())
+      : escapeHtml(createdAtRaw || "-");
+
+  const amount = Number.parseFloat(String(record.amount || "0"));
+  const amountLabel = escapeHtml(
+    formatMoney(Number.isFinite(amount) ? amount : 0),
+  );
+
+  const content = `
+    <div style="display:grid; gap:10px;">
+      <div><strong>Receiving No:</strong> ${receivingNo}</div>
+      <div><strong>Supplier:</strong> ${supplierName}</div>
+      <div><strong>Status:</strong> ${status}</div>
+      <div><strong>Date:</strong> ${createdLabel}</div>
+      <div><strong>Total Amount:</strong> Tsh ${amountLabel}</div>
+      <div style="overflow:auto; margin-top:4px;">
+        <table class="data-table" style="min-width:560px;">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Received</th>
+              <th>Rejected</th>
+              <th>Unit Cost</th>
+              <th>Line Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemRows}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  openModal("Receiving Details", content, [
+    { text: "Close", class: "btn-primary", onclick: "closeModal()" },
+  ]);
+}
+
+function updateReceivingStatus(id, status) {
+  const receivingId = Number.parseInt(id, 10);
+  const normalizedStatus = String(status || "").trim();
+  if (!Number.isFinite(receivingId) || receivingId <= 0) {
+    showToast("error", "Invalid receiving ID");
+    return;
+  }
+
+  if (!["Pending", "Received", "Completed"].includes(normalizedStatus)) {
+    showToast("error", "Invalid receiving status");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const iconClass =
+    normalizedStatus === "Completed" ? "fa-circle-check" : "fa-truck-ramp-box";
+  const buttonClass =
+    normalizedStatus === "Completed" ? "btn-primary" : "btn-secondary";
+  const note =
+    normalizedStatus === "Completed"
+      ? '<p style="margin: 8px 0 0 0; font-size: 13px; color: #6B7280;">Stock quantities will be posted if not already applied.</p>'
+      : "";
+
+  const content = `
+    <form id="receivingStatusForm" method="POST" action="?page=receiving">
+      <input type="hidden" name="action" value="update_entity">
+      <input type="hidden" name="entity" value="receiving_status">
+      <input type="hidden" name="id" value="${receivingId}">
+      <input type="hidden" name="status" value="${escapeHtml(normalizedStatus)}">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <div style="text-align: center; padding: 20px 0;">
+        <i class="fa-solid ${iconClass}" style="font-size: 48px; color: #4F46E5; margin-bottom: 16px;"></i>
+        <p style="margin: 0; font-size: 16px;">Set receiving status to ${escapeHtml(normalizedStatus)}?</p>
+        ${note}
+      </div>
+    </form>
+  `;
+
+  openModal("Update Receiving", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: normalizedStatus,
+      class: buttonClass,
+      onclick: 'document.getElementById("receivingStatusForm").requestSubmit()',
+    },
+  ]);
 }
 
 function viewEmployee(target) {

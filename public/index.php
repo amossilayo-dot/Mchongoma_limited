@@ -118,6 +118,8 @@ $saleCustomerOptions = [
 ];
 $allSales = $recentSales;
 $suppliers = [];
+$receivingRecords = [];
+$receivingItemsByRecord = [];
 $employees = [];
 $appointments = [];
 $systemUsers = [];
@@ -187,6 +189,7 @@ try {
     $customerCreditRepo = new CustomerCreditRepository($pdo);
 
     ensureCustomerCreditTables($pdo);
+    ensureReceivingItemsTable($pdo);
     ensureUserAccountManagementSchema($pdo);
 
     if (isStoreConfigSaveRequest()) {
@@ -245,6 +248,12 @@ try {
     ], $customerRepo->getCustomers(500));
     $allSales = $salesRepo->getSales(50);
     $suppliers = (new SuppliersRepository($pdo))->getSuppliers(200);
+    if (canAccessPage('receiving', $userRole)) {
+        $receivingRepo = new ReceivingRepository($pdo);
+        $receivingRecords = $receivingRepo->getReceivings(300);
+        $receivingIds = array_map(static fn(array $item): int => (int) ($item['id'] ?? 0), $receivingRecords);
+        $receivingItemsByRecord = $receivingRepo->getReceivingItemsByReceivingIds($receivingIds);
+    }
     if (canAccessPage('employees', $userRole)) {
         $employees = (new EmployeesRepository($pdo))->getEmployees(300);
     }
@@ -659,6 +668,7 @@ function resolveEntityPageKey(string $entity): ?string
         'invoice' => 'invoices',
         'delivery' => 'deliveries',
         'receiving' => 'receiving',
+        'receiving_status' => 'receiving',
         'quotation' => 'quotations',
         'purchase_order' => 'purchase-orders',
         'return' => 'returns',
@@ -759,6 +769,42 @@ function ensureCustomerCreditTables(PDO $pdo): void
                 ON DELETE RESTRICT ON UPDATE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
     );
+}
+
+function ensureReceivingItemsTable(PDO $pdo): void
+{
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS receiving_items (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            receiving_id INT NOT NULL,
+            product_id INT NOT NULL,
+            quantity_received INT NOT NULL DEFAULT 0,
+            quantity_rejected INT NOT NULL DEFAULT 0,
+            unit_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+            line_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_receiving_item_receiving (receiving_id),
+            INDEX idx_receiving_item_product (product_id),
+            CONSTRAINT fk_receiving_item_receiving
+                FOREIGN KEY (receiving_id) REFERENCES receiving(id)
+                ON DELETE CASCADE ON UPDATE CASCADE,
+            CONSTRAINT fk_receiving_item_product
+                FOREIGN KEY (product_id) REFERENCES products(id)
+                ON DELETE RESTRICT ON UPDATE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
+
+    $stockAppliedColumnCheck = $pdo->prepare(
+        'SELECT COUNT(*) AS total
+         FROM information_schema.columns
+         WHERE table_schema = DATABASE()
+           AND table_name = "receiving"
+           AND column_name = "stock_applied"'
+    );
+    $stockAppliedColumnCheck->execute();
+    if ((int) ($stockAppliedColumnCheck->fetch()['total'] ?? 0) === 0) {
+        $pdo->exec('ALTER TABLE receiving ADD COLUMN stock_applied TINYINT(1) NOT NULL DEFAULT 0 AFTER amount');
+    }
 }
 
 function ensureStoreSettingsTable(PDO $pdo): void
@@ -1507,9 +1553,13 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                 return ['type' => 'success', 'message' => 'Delivery created successfully.'];
 
             case 'receiving':
+                $itemsPayload = json_decode((string) ($_POST['items_json'] ?? '[]'), true);
+                $receivingItems = is_array($itemsPayload) ? $itemsPayload : [];
                 (new ReceivingRepository($pdo))->createReceiving([
                     'supplier_id' => (int) ($_POST['supplier_id'] ?? 0),
+                    'status' => (string) ($_POST['status'] ?? 'Pending'),
                     'amount' => (float) ($_POST['amount'] ?? 0),
+                    'items' => $receivingItems,
                 ]);
                 return ['type' => 'success', 'message' => 'Receiving record created successfully.'];
 
@@ -1886,6 +1936,24 @@ function handleEntityUpdate(PDO $pdo, string $currentPage, string $userRole): ar
                 }
 
                 return ['type' => 'success', 'message' => 'Appointment status updated successfully.'];
+
+            case 'receiving_status':
+                if ($currentPage !== 'receiving') {
+                    throw new RuntimeException('Receiving status updates are only allowed from the receiving page.');
+                }
+
+                $receivingId = (int) ($_POST['id'] ?? 0);
+                $requestedStatus = trim((string) ($_POST['status'] ?? ''));
+                if ($receivingId <= 0) {
+                    throw new RuntimeException('Invalid receiving ID.');
+                }
+
+                $updated = (new ReceivingRepository($pdo))->updateReceivingStatus($receivingId, $requestedStatus);
+                if (!$updated) {
+                    throw new RuntimeException('Could not update receiving status.');
+                }
+
+                return ['type' => 'success', 'message' => 'Receiving status updated successfully.'];
         }
 
         return [
@@ -1894,11 +1962,20 @@ function handleEntityUpdate(PDO $pdo, string $currentPage, string $userRole): ar
         ];
     } catch (Throwable $exception) {
         error_log('[POS Update] ' . $exception->getMessage());
+
+        $safeMessage = 'Could not update the record. Please check your input and try again.';
+        if (!($exception instanceof PDOException)) {
+            $candidate = trim((string) $exception->getMessage());
+            if ($candidate !== '') {
+                $safeMessage = $candidate;
+            }
+        }
+
         return [
             'type' => 'error',
             'message' => isDebugMode()
                 ? 'Update failed: ' . $exception->getMessage()
-                : 'Could not update the record. Please check your input and try again.',
+                : $safeMessage,
         ];
     }
 }
@@ -3605,11 +3682,52 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                             </tr>
                         </thead>
                         <tbody>
-                            <tr>
-                                <td colspan="6" style="text-align:center; padding: 20px;">
-                                    <i class="fa-solid fa-inbox"></i> No receiving records yet
-                                </td>
-                            </tr>
+                            <?php if (count($receivingRecords) === 0): ?>
+                                <tr>
+                                    <td colspan="6" style="text-align:center; padding: 20px;">
+                                        <i class="fa-solid fa-inbox"></i> No receiving records yet
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($receivingRecords as $receiving): ?>
+                                    <?php
+                                        $receivingStatus = trim((string) ($receiving['status'] ?? 'Pending'));
+                                        $receivingStatusClass = strtolower($receivingStatus) === 'completed'
+                                            ? 'success'
+                                            : (strtolower($receivingStatus) === 'received' ? 'warning' : 'danger');
+                                        $receivingDateRaw = (string) ($receiving['created_at'] ?? '');
+                                        $receivingDateTs = strtotime($receivingDateRaw);
+                                        $receivingDateLabel = $receivingDateTs !== false
+                                            ? date('M d, Y H:i', $receivingDateTs)
+                                            : $receivingDateRaw;
+                                        $supplierLabel = (string) (($receiving['supplier_name'] ?? '') !== ''
+                                            ? $receiving['supplier_name']
+                                            : ('Supplier #' . (int) ($receiving['supplier_id'] ?? 0)));
+                                    ?>
+                                    <tr>
+                                        <td><strong><?= e((string) ($receiving['receiving_no'] ?? '')) ?></strong></td>
+                                        <td><?= e($supplierLabel) ?></td>
+                                        <td>Tsh <?= moneyFormat((float) ($receiving['amount'] ?? 0)) ?></td>
+                                        <td><span class="status-badge <?= e($receivingStatusClass) ?>"><?= e($receivingStatus) ?></span></td>
+                                        <td><?= e($receivingDateLabel) ?></td>
+                                        <td>
+                                            <button class="btn-icon" data-action="viewReceiving" data-value="<?= (int) ($receiving['id'] ?? 0) ?>" title="View">
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                            <?php if (strtolower($receivingStatus) === 'pending'): ?>
+                                                <button class="btn-icon" data-action="updateReceivingStatus" data-value="<?= (int) ($receiving['id'] ?? 0) ?>" data-status="Received" title="Mark Received">
+                                                    <i class="fa-solid fa-truck-ramp-box"></i>
+                                                </button>
+                                            <?php endif; ?>
+                                            <?php if (strtolower($receivingStatus) !== 'completed'): ?>
+                                                <button class="btn-icon" data-action="updateReceivingStatus" data-value="<?= (int) ($receiving['id'] ?? 0) ?>" data-status="Completed" title="Mark Completed">
+                                                    <i class="fa-solid fa-check"></i>
+                                                </button>
+                                            <?php endif; ?>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
@@ -4208,6 +4326,42 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
         'name' => (string) ($item['name'] ?? ''),
         'phone' => (string) ($item['phone'] ?? ''),
     ], $customers),
+    'suppliers' => array_map(static fn(array $item) => [
+        'id' => (int) ($item['id'] ?? 0),
+        'name' => (string) ($item['name'] ?? ''),
+        'status' => (string) ($item['status'] ?? 'Active'),
+    ], $suppliers),
+    'receivingRecords' => array_map(static function (array $item) use ($receivingItemsByRecord): array {
+        $receivingId = (int) ($item['id'] ?? 0);
+        $rawItems = $receivingItemsByRecord[$receivingId] ?? [];
+        $items = [];
+        if (is_array($rawItems)) {
+            foreach ($rawItems as $rawItem) {
+                if (!is_array($rawItem)) {
+                    continue;
+                }
+                $items[] = [
+                    'product_id' => (int) ($rawItem['product_id'] ?? 0),
+                    'product_name' => (string) ($rawItem['product_name'] ?? ''),
+                    'quantity_received' => (int) ($rawItem['quantity_received'] ?? 0),
+                    'quantity_rejected' => (int) ($rawItem['quantity_rejected'] ?? 0),
+                    'unit_cost' => (float) ($rawItem['unit_cost'] ?? 0),
+                    'line_total' => (float) ($rawItem['line_total'] ?? 0),
+                ];
+            }
+        }
+
+        return [
+            'id' => $receivingId,
+            'receiving_no' => (string) ($item['receiving_no'] ?? ''),
+            'supplier_id' => (int) ($item['supplier_id'] ?? 0),
+            'supplier_name' => (string) ($item['supplier_name'] ?? ''),
+            'status' => (string) ($item['status'] ?? 'Pending'),
+            'amount' => (float) ($item['amount'] ?? 0),
+            'created_at' => (string) ($item['created_at'] ?? ''),
+            'items' => $items,
+        ];
+    }, $receivingRecords),
     'users' => array_map(static fn(array $item) => [
         'id' => (int) ($item['id'] ?? 0),
         'name' => (string) ($item['name'] ?? ''),
