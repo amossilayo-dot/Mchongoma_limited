@@ -151,9 +151,6 @@ if (isProductionEnvironment()) {
         <p class="subtitle">POS Mchongoma System - Checking database structure against ERD diagram</p>
 
         <?php
-        declare(strict_types=1);
-
-        require_once __DIR__ . '/../config/database.php';
 
         $requiredTables = [
             'users' => 'Core: User authentication and roles',
