@@ -1162,15 +1162,34 @@ function showNewSaleModal() {
     : [];
   let loadedProducts = [...products];
 
+  const walkInCustomer =
+    customers.find(
+      (customer) =>
+        String(customer?.name || "")
+          .trim()
+          .toLowerCase() === "walk-in customer",
+    ) || null;
+
+  const orderedCustomers = walkInCustomer
+    ? [
+        walkInCustomer,
+        ...customers.filter((customer) => customer !== walkInCustomer),
+      ]
+    : customers;
+
   const customerOptions =
-    customers.length > 0
-      ? customers
-          .map(
-            (c) =>
-              `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name || "")}</option>`,
-          )
+    orderedCustomers.length > 0
+      ? orderedCustomers
+          .map((customer, index) => {
+            const isWalkIn =
+              String(customer?.name || "")
+                .trim()
+                .toLowerCase() === "walk-in customer";
+            const selected = isWalkIn || (!walkInCustomer && index === 0);
+            return `<option value="${escapeHtml(customer.id)}"${selected ? " selected" : ""}>${escapeHtml(customer.name || "")}</option>`;
+          })
           .join("")
-      : '<option value="1">Walk-in Customer</option>';
+      : '<option value="1" selected>Walk-in Customer</option>';
 
   const content = `
         <form id="newSaleForm" method="POST" action="?page=sales">
@@ -1185,10 +1204,9 @@ function showNewSaleModal() {
             </div>
             <div class="form-group">
                 <label>Product</label>
-                <input type="text" id="saleProductSearch" placeholder="Search products..." class="form-control" style="margin-bottom:8px;">
-                <select id="saleProductId" name="product_id" ${products.length > 0 ? "required" : ""}>
-                    <option value="">Select product</option>
-                </select>
+              <input type="hidden" id="saleProductId" name="product_id" value="">
+              <input type="text" id="saleProductSearch" placeholder="Search products..." class="form-control" autocomplete="off">
+              <div id="saleProductResults" class="sales-product-results" style="display:none; margin-top:8px; max-height:300px; overflow:auto; border:1px solid #E5E7EB; border-radius:10px; background:#fff;"></div>
             </div>
             <div class="form-group">
                 <label>Quantity</label>
@@ -1238,7 +1256,8 @@ function showNewSaleModal() {
 
   const paymentMethodEl = document.getElementById("salePaymentMethod");
   const productSearchEl = document.getElementById("saleProductSearch");
-  const productEl = document.getElementById("saleProductId");
+  const productIdEl = document.getElementById("saleProductId");
+  const productResultsEl = document.getElementById("saleProductResults");
   const quantityEl = document.getElementById("saleQuantity");
   const amountEl = document.getElementById("saleAmount");
   const mobileMoneyFields = document.getElementById("mobileMoneyFields");
@@ -1246,13 +1265,14 @@ function showNewSaleModal() {
   const mobileMoneyPhone = document.getElementById("mobileMoneyPhone");
   let productSearchTimer = null;
   let productSearchRequestId = 0;
+  let productSearchTerm = "";
+  let selectedProduct = null;
 
   const renderProductOptions = (searchTerm = "") => {
-    if (!productEl) {
+    if (!productResultsEl) {
       return;
     }
 
-    const previous = productEl.value;
     const term = (searchTerm || "").toLowerCase().trim();
     const source = loadedProducts.filter((p) => {
       if (term === "") {
@@ -1263,41 +1283,66 @@ function showNewSaleModal() {
       return name.includes(term) || category.includes(term);
     });
 
-    productEl.innerHTML = "";
-
-    const first = document.createElement("option");
-    first.value = "";
-    first.textContent = "Select product";
-    productEl.appendChild(first);
-
     if (source.length === 0) {
-      const empty = document.createElement("option");
-      empty.value = "";
-      empty.textContent = "No products available";
-      productEl.appendChild(empty);
-      productEl.required = false;
+      productResultsEl.innerHTML =
+        '<div style="padding:10px 12px; color:#6B7280;">No products available</div>';
+      productResultsEl.style.display = "block";
       return;
     }
 
-    source.forEach((p) => {
-      const option = document.createElement("option");
-      const category = String(p.category || "").trim();
-      const stock = Number.isFinite(Number(p.stock_qty))
-        ? Number(p.stock_qty)
-        : 0;
-      const price = Number.isFinite(Number(p.unit_price))
-        ? Number(p.unit_price)
-        : 0;
-      option.value = String(p.id || "");
-      option.setAttribute("data-price", String(price));
-      option.textContent = `${p.name || ""}${category ? ` - ${category}` : ""} | Stock: ${stock} | Tsh ${price.toLocaleString()}`;
-      productEl.appendChild(option);
-    });
+    productResultsEl.innerHTML = source
+      .slice(0, 200)
+      .map((p) => {
+        const category = String(p.category || "").trim();
+        const stock = Number.isFinite(Number(p.stock_qty))
+          ? Number(p.stock_qty)
+          : 0;
+        const price = Number.isFinite(Number(p.unit_price))
+          ? Number(p.unit_price)
+          : 0;
+        const id = String(p.id || "");
+        const label = `${p.name || ""}${category ? ` - ${category}` : ""} | Stock: ${stock} | Tsh ${price.toLocaleString()}`;
+        const isActive = selectedProduct && String(selectedProduct.id) === id;
+        return `<button type="button" class="sales-product-result-item${isActive ? " active" : ""}" data-product-id="${escapeHtml(id)}" style="display:block; width:100%; text-align:left; border:none; background:${isActive ? "#EEF2FF" : "#fff"}; padding:10px 12px; cursor:pointer;">${escapeHtml(label)}</button>`;
+      })
+      .join("");
+    productResultsEl.style.display = "block";
+  };
 
-    productEl.required = true;
-    if (previous && source.some((p) => String(p.id) === previous)) {
-      productEl.value = previous;
+  const findProductById = (id) =>
+    loadedProducts.find((p) => String(p.id || "") === String(id || "")) || null;
+
+  const formatProductLabel = (product) => {
+    if (!product) {
+      return "";
     }
+
+    const category = String(product.category || "").trim();
+    const stock = Number.isFinite(Number(product.stock_qty))
+      ? Number(product.stock_qty)
+      : 0;
+    const price = Number.isFinite(Number(product.unit_price))
+      ? Number(product.unit_price)
+      : 0;
+    return `${product.name || ""}${category ? ` - ${category}` : ""} | Stock: ${stock} | Tsh ${price.toLocaleString()}`;
+  };
+
+  const selectProduct = (product) => {
+    selectedProduct = product || null;
+    if (productIdEl) {
+      productIdEl.value = selectedProduct
+        ? String(selectedProduct.id || "")
+        : "";
+    }
+    if (productSearchEl) {
+      productSearchEl.value = selectedProduct
+        ? formatProductLabel(selectedProduct)
+        : "";
+    }
+    if (productResultsEl) {
+      productResultsEl.style.display = "none";
+    }
+    syncAmount();
   };
 
   const loadProductsFallback = async () => {
@@ -1321,7 +1366,7 @@ function showNewSaleModal() {
       }
 
       loadedProducts = data.items;
-      renderProductOptions(productSearchEl?.value || "");
+      renderProductOptions(productSearchTerm);
       syncAmount();
     } catch (error) {
       // Keep modal usable even if fallback feed fails.
@@ -1357,13 +1402,13 @@ function showNewSaleModal() {
   };
 
   const syncAmount = () => {
-    if (!productEl || !amountEl || !quantityEl) {
+    if (!amountEl || !quantityEl) {
       return;
     }
-    const selectedOption = productEl.options[productEl.selectedIndex];
-    const unitPrice = parseFloat(
-      selectedOption?.getAttribute("data-price") || "0",
-    );
+
+    const unitPrice = Number.isFinite(Number(selectedProduct?.unit_price))
+      ? Number(selectedProduct.unit_price)
+      : 0;
     const quantity = Math.max(1, parseInt(quantityEl.value || "1", 10));
     amountEl.value = String(Math.max(0, Math.round(unitPrice * quantity)));
   };
@@ -1381,26 +1426,123 @@ function showNewSaleModal() {
     }
   };
 
-  paymentMethodEl?.addEventListener("change", toggleMobileMoneyFields);
-  productSearchEl?.addEventListener("input", () => {
-    const term = productSearchEl.value || "";
-    renderProductOptions(term);
+  const searchProducts = (term) => {
+    productSearchTerm = String(term || "").trim();
+    if (productIdEl) {
+      productIdEl.value = "";
+    }
+    selectedProduct = null;
+    renderProductOptions(productSearchTerm);
 
     if (productSearchTimer) {
       clearTimeout(productSearchTimer);
     }
 
-    if (term.trim().length < 2) {
+    if (productSearchTerm.length < 2) {
       return;
     }
 
     productSearchTimer = setTimeout(() => {
-      runRemoteProductSearch(term.trim());
+      runRemoteProductSearch(productSearchTerm);
     }, 220);
+  };
+
+  const getFirstResultButton = () =>
+    productResultsEl?.querySelector(".sales-product-result-item") || null;
+
+  paymentMethodEl?.addEventListener("change", toggleMobileMoneyFields);
+  productSearchEl?.addEventListener("input", () => {
+    searchProducts(productSearchEl.value);
+    if (productResultsEl) {
+      productResultsEl.style.display = "block";
+    }
   });
-  productEl?.addEventListener("change", syncAmount);
+
+  productSearchEl?.addEventListener("focus", () => {
+    renderProductOptions(productSearchTerm || productSearchEl.value || "");
+    if (productResultsEl) {
+      productResultsEl.style.display = "block";
+    }
+  });
+
+  productSearchEl?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      if (productResultsEl) {
+        productResultsEl.style.display = "none";
+      }
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      const firstResult = getFirstResultButton();
+      if (firstResult) {
+        event.preventDefault();
+        firstResult.focus();
+      }
+      return;
+    }
+
+    if (event.key === "Enter") {
+      const firstResult = getFirstResultButton();
+      if (firstResult) {
+        event.preventDefault();
+        const product = findProductById(
+          firstResult.getAttribute("data-product-id") || "",
+        );
+        selectProduct(product);
+      }
+    }
+  });
+
+  productResultsEl?.addEventListener("click", (event) => {
+    const item = event.target.closest("[data-product-id]");
+    if (!item) {
+      return;
+    }
+
+    const product = findProductById(item.getAttribute("data-product-id") || "");
+    selectProduct(product);
+  });
+
+  document.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    if (
+      target.closest("#saleProductSearch") ||
+      target.closest("#saleProductResults")
+    ) {
+      return;
+    }
+
+    if (productResultsEl) {
+      productResultsEl.style.display = "none";
+    }
+  });
+
+  const formEl = document.getElementById("newSaleForm");
+  formEl?.addEventListener("submit", (event) => {
+    if (productIdEl && productIdEl.value.trim() !== "") {
+      return;
+    }
+
+    event.preventDefault();
+    showToast("warning", "Select product");
+    productSearchEl?.focus();
+  });
+
   quantityEl?.addEventListener("input", syncAmount);
-  renderProductOptions("");
+  if (productSearchEl) {
+    productSearchEl.value = "";
+  }
+  if (productIdEl) {
+    productIdEl.value = "";
+  }
+  if (productResultsEl) {
+    productResultsEl.style.display = "none";
+  }
   toggleMobileMoneyFields();
   syncAmount();
   loadProductsFallback();
