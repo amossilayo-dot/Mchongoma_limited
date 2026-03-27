@@ -119,6 +119,7 @@ $saleCustomerOptions = [
 $allSales = $recentSales;
 $suppliers = [];
 $employees = [];
+$appointments = [];
 $systemUsers = [];
 $userPermissionOverridesByUser = [];
 $dashboardEodSummary = [
@@ -246,6 +247,9 @@ try {
     $suppliers = (new SuppliersRepository($pdo))->getSuppliers(200);
     if (canAccessPage('employees', $userRole)) {
         $employees = (new EmployeesRepository($pdo))->getEmployees(300);
+    }
+    if (canAccessPage('appointments', $userRole)) {
+        $appointments = (new AppointmentsRepository($pdo))->getAppointments(300);
     }
     if (canAccessPage('users', $userRole) && hasUsersTable($pdo)) {
         $usersStmt = $pdo->query(
@@ -510,6 +514,18 @@ foreach ($paymentMap as $method => $amount) {
 }
 usort($reportPaymentBreakdown, static fn(array $a, array $b): int => $b['amount'] <=> $a['amount']);
 
+$reportRangeLabel = (string) ($reportRangeButtons[$reportRange] ?? ucfirst($reportRange));
+$reportAverageTicket = $reportTransactionsTotal > 0
+    ? ($reportRevenueTotal / $reportTransactionsTotal)
+    : 0.0;
+$reportTopPaymentMethod = count($reportPaymentBreakdown) > 0
+    ? (string) ($reportPaymentBreakdown[0]['method'] ?? 'N/A')
+    : 'N/A';
+$reportTopPaymentShare = count($reportPaymentBreakdown) > 0
+    ? (float) ($reportPaymentBreakdown[0]['percentage'] ?? 0)
+    : 0.0;
+$reportGeneratedAt = date('M d, Y H:i');
+
 $reportCashierPerformance = [[
     'name' => $userName,
     'sales_count' => $reportTransactionsTotal,
@@ -631,6 +647,7 @@ function resolveEntityPageKey(string $entity): ?string
         'sale' => 'sales',
         'product' => 'inventory',
         'customer' => 'customers',
+        'customer_delete' => 'customers',
         'customer_payment' => 'customers',
         'supplier' => 'suppliers',
         'employee' => 'employees',
@@ -646,6 +663,8 @@ function resolveEntityPageKey(string $entity): ?string
         'purchase_order' => 'purchase-orders',
         'return' => 'returns',
         'appointment' => 'appointments',
+        'appointment_delete' => 'appointments',
+        'appointment_status' => 'appointments',
         'location' => 'locations',
         'message' => 'messages',
     ];
@@ -1524,6 +1543,23 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                 ]);
                 return ['type' => 'success', 'message' => 'Appointment created successfully.'];
 
+            case 'appointment_delete':
+                if ($currentPage !== 'appointments') {
+                    throw new RuntimeException('Appointment deletion is only allowed from the appointments page.');
+                }
+
+                $appointmentId = (int) ($_POST['id'] ?? 0);
+                if ($appointmentId <= 0) {
+                    throw new RuntimeException('Invalid appointment ID.');
+                }
+
+                $deleted = (new AppointmentsRepository($pdo))->deleteAppointment($appointmentId);
+                if (!$deleted) {
+                    throw new RuntimeException('Could not delete appointment.');
+                }
+
+                return ['type' => 'success', 'message' => 'Appointment deleted successfully.'];
+
             case 'location':
                 (new LocationsRepository($pdo))->createLocation([
                     'name' => (string) ($_POST['name'] ?? ''),
@@ -1549,11 +1585,20 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
         ];
     } catch (Throwable $exception) {
         error_log('[POS Create] ' . $exception->getMessage());
+
+        $safeMessage = 'Could not save the record. Please check your input and try again.';
+        if (!($exception instanceof PDOException)) {
+            $candidate = trim((string) $exception->getMessage());
+            if ($candidate !== '') {
+                $safeMessage = $candidate;
+            }
+        }
+
         return [
             'type' => 'error',
             'message' => isDebugMode()
                 ? 'Save failed: ' . $exception->getMessage()
-                : 'Could not save the record. Please check your input and try again.',
+                : $safeMessage,
         ];
     }
 }
@@ -1616,6 +1661,34 @@ function handleEntityUpdate(PDO $pdo, string $currentPage, string $userRole): ar
                 ]);
 
                 return ['type' => 'success', 'message' => 'Customer updated successfully.'];
+
+            case 'customer_delete':
+                if ($currentPage !== 'customers') {
+                    throw new RuntimeException('Customer deletions are only allowed from the customers page.');
+                }
+
+                $customerId = (int) ($_POST['id'] ?? 0);
+                if ($customerId <= 0) {
+                    throw new RuntimeException('Invalid customer ID.');
+                }
+
+                $customerRepo = new CustomerRepository($pdo);
+                $customer = $customerRepo->getCustomer($customerId);
+                if ($customer === null) {
+                    throw new RuntimeException('Customer not found.');
+                }
+
+                $customerName = strtolower(trim((string) ($customer['name'] ?? '')));
+                if ($customerName === 'walk-in customer') {
+                    throw new RuntimeException('Walk-in Customer cannot be deleted.');
+                }
+
+                $deleted = $customerRepo->deleteCustomer($customerId);
+                if (!$deleted) {
+                    throw new RuntimeException('Could not delete customer.');
+                }
+
+                return ['type' => 'success', 'message' => 'Customer deleted successfully.'];
 
             case 'user':
                 if ($currentPage !== 'users') {
@@ -1795,6 +1868,24 @@ function handleEntityUpdate(PDO $pdo, string $currentPage, string $userRole): ar
                 }
 
                 return ['type' => 'success', 'message' => 'User permission override saved successfully.'];
+
+            case 'appointment_status':
+                if ($currentPage !== 'appointments') {
+                    throw new RuntimeException('Appointment status updates are only allowed from the appointments page.');
+                }
+
+                $appointmentId = (int) ($_POST['id'] ?? 0);
+                $requestedStatus = trim((string) ($_POST['status'] ?? ''));
+                if ($appointmentId <= 0) {
+                    throw new RuntimeException('Invalid appointment ID.');
+                }
+
+                $updated = (new AppointmentsRepository($pdo))->updateAppointmentStatus($appointmentId, $requestedStatus);
+                if (!$updated) {
+                    throw new RuntimeException('Could not update appointment status.');
+                }
+
+                return ['type' => 'success', 'message' => 'Appointment status updated successfully.'];
         }
 
         return [
@@ -3025,6 +3116,11 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                     <div class="page-info">
                         <h2>Reports</h2>
                         <p>Sales analytics and insights</p>
+                        <p class="report-period-note">
+                            Period: <strong><?= e($reportRangeLabel) ?></strong>
+                            <span class="report-period-sep">|</span>
+                            Updated: <?= e($reportGeneratedAt) ?>
+                        </p>
                     </div>
                     <div class="report-toolbar">
                         <div class="report-time-filter">
@@ -3063,6 +3159,15 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                     <article class="report-kpi-card">
                         <span>Transactions</span>
                         <strong><?= $reportTransactionsTotal ?></strong>
+                    </article>
+                    <article class="report-kpi-card">
+                        <span>Average Ticket</span>
+                        <strong>Tsh <?= moneyFormat($reportAverageTicket) ?></strong>
+                    </article>
+                    <article class="report-kpi-card">
+                        <span>Top Payment Method</span>
+                        <strong><?= e($reportTopPaymentMethod) ?></strong>
+                        <small><?= number_format($reportTopPaymentShare, 1) ?>% of revenue</small>
                     </article>
                 </div>
 
@@ -3266,7 +3371,18 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                         <td><strong>Tsh <?= moneyFormat((float) ($employee['salary'] ?? 0)) ?></strong></td>
                                         <td><span class="status-badge <?= e($employeeStatusClass) ?>"><?= e($employeeStatus) ?></span></td>
                                         <td>
-                                            <button class="btn-icon" title="View">
+                                            <button
+                                                class="btn-icon"
+                                                data-action="viewEmployee"
+                                                data-value="<?= (int) ($employee['id'] ?? 0) ?>"
+                                                data-name="<?= e((string) ($employee['name'] ?? '')) ?>"
+                                                data-position="<?= e((string) (($employee['position'] ?? '') !== '' ? $employee['position'] : 'N/A')) ?>"
+                                                data-phone="<?= e((string) (($employee['phone'] ?? '') !== '' ? $employee['phone'] : 'N/A')) ?>"
+                                                data-email="<?= e((string) (($employee['email'] ?? '') !== '' ? $employee['email'] : 'N/A')) ?>"
+                                                data-salary="<?= (float) ($employee['salary'] ?? 0) ?>"
+                                                data-status="<?= e($employeeStatus) ?>"
+                                                title="View"
+                                            >
                                                 <i class="fa-solid fa-eye"></i>
                                             </button>
                                         </td>
@@ -3614,11 +3730,61 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                             </tr>
                         </thead>
                         <tbody>
-                            <tr>
-                                <td colspan="6" style="text-align:center; padding: 20px;">
-                                    <i class="fa-solid fa-calendar-xmark"></i> No appointments scheduled yet
-                                </td>
-                            </tr>
+                            <?php if (count($appointments) === 0): ?>
+                                <tr>
+                                    <td colspan="6" style="text-align:center; padding: 20px;">
+                                        <i class="fa-solid fa-calendar-xmark"></i> No appointments scheduled yet
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($appointments as $appointment): ?>
+                                    <?php
+                                        $appointmentStatus = trim((string) ($appointment['status'] ?? 'Scheduled'));
+                                        $appointmentStatusClass = strtolower($appointmentStatus) === 'completed'
+                                            ? 'success'
+                                            : (strtolower($appointmentStatus) === 'cancelled' ? 'danger' : 'warning');
+                                        $appointmentDateRaw = (string) ($appointment['appointment_date'] ?? '');
+                                        $appointmentDateTs = strtotime($appointmentDateRaw);
+                                        $appointmentDateLabel = $appointmentDateTs !== false
+                                            ? date('M d, Y H:i', $appointmentDateTs)
+                                            : $appointmentDateRaw;
+                                    ?>
+                                    <tr>
+                                        <td><?= (int) ($appointment['id'] ?? 0) ?></td>
+                                        <td><strong><?= e((string) ($appointment['title'] ?? '')) ?></strong></td>
+                                        <td><?= e((string) (($appointment['customer_name'] ?? '') !== '' ? $appointment['customer_name'] : ('Customer #' . (int) ($appointment['customer_id'] ?? 0))) ) ?></td>
+                                        <td><?= e($appointmentDateLabel) ?></td>
+                                        <td><span class="status-badge <?= e($appointmentStatusClass) ?>"><?= e($appointmentStatus) ?></span></td>
+                                        <td>
+                                            <button
+                                                class="btn-icon"
+                                                data-action="viewAppointment"
+                                                data-value="<?= (int) ($appointment['id'] ?? 0) ?>"
+                                                data-title="<?= e((string) ($appointment['title'] ?? '')) ?>"
+                                                data-customer="<?= e((string) (($appointment['customer_name'] ?? '') !== '' ? $appointment['customer_name'] : ('Customer #' . (int) ($appointment['customer_id'] ?? 0))) ) ?>"
+                                                data-date="<?= e($appointmentDateLabel) ?>"
+                                                data-status="<?= e($appointmentStatus) ?>"
+                                                title="View"
+                                            >
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                            <?php if (strtolower($appointmentStatus) !== 'completed'): ?>
+                                                <button class="btn-icon" data-action="completeAppointment" data-value="<?= (int) ($appointment['id'] ?? 0) ?>" title="Mark Completed">
+                                                    <i class="fa-solid fa-check"></i>
+                                                </button>
+                                            <?php endif; ?>
+                                            <?php if (strtolower($appointmentStatus) !== 'cancelled'): ?>
+                                                <button class="btn-icon" data-action="cancelAppointment" data-value="<?= (int) ($appointment['id'] ?? 0) ?>" title="Cancel Appointment">
+                                                    <i class="fa-solid fa-ban"></i>
+                                                </button>
+                                            <?php endif; ?>
+                                            <button class="btn-icon danger" data-action="deleteAppointment" data-value="<?= (int) ($appointment['id'] ?? 0) ?>" title="Delete">
+                                                <i class="fa-solid fa-trash"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>

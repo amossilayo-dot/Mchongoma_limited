@@ -913,6 +913,31 @@ function initActionBindings() {
       return;
     }
 
+    if (action === "deleteAppointment") {
+      deleteAppointment(parseInt(value, 10));
+      return;
+    }
+
+    if (action === "completeAppointment") {
+      updateAppointmentStatus(parseInt(value, 10), "Completed");
+      return;
+    }
+
+    if (action === "cancelAppointment") {
+      updateAppointmentStatus(parseInt(value, 10), "Cancelled");
+      return;
+    }
+
+    if (action === "viewAppointment") {
+      viewAppointment(target);
+      return;
+    }
+
+    if (action === "viewEmployee") {
+      viewEmployee(target);
+      return;
+    }
+
     if (action === "printCustomerStatement") {
       printCustomerStatement(parseInt(value, 10));
       return;
@@ -1838,6 +1863,57 @@ function openAddUserModal() {
       },
     ],
   });
+
+  const form = document.getElementById("userForm");
+  if (!form) {
+    return;
+  }
+
+  form.addEventListener("submit", (event) => {
+    const nameInput = form.querySelector('input[name="name"]');
+    const emailInput = form.querySelector('input[name="email"]');
+    const passwordInput = form.querySelector('input[name="password"]');
+    const roleInput = form.querySelector('select[name="role"]');
+
+    const name = String(nameInput?.value || "").trim();
+    const email = String(emailInput?.value || "")
+      .trim()
+      .toLowerCase();
+    const password = String(passwordInput?.value || "");
+    const role = String(roleInput?.value || "").trim();
+
+    if (name === "" || email === "" || password === "" || role === "") {
+      event.preventDefault();
+      showToast("warning", "Name, email, password, and role are required.");
+      return;
+    }
+
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      event.preventDefault();
+      showToast("warning", "Please provide a valid user email address.");
+      return;
+    }
+
+    if (password.length < 8) {
+      event.preventDefault();
+      showToast("warning", "Password must be at least 8 characters long.");
+      return;
+    }
+
+    const existingUsers = Array.isArray(APP_CONFIG.users)
+      ? APP_CONFIG.users
+      : [];
+    const emailExists = existingUsers.some(
+      (user) =>
+        String(user?.email || "")
+          .trim()
+          .toLowerCase() === email,
+    );
+    if (emailExists) {
+      event.preventDefault();
+      showToast("warning", "A user with this email already exists.");
+    }
+  });
 }
 
 function editUserRole(userId, currentRole, userName) {
@@ -2245,6 +2321,17 @@ function openAddReturnModal() {
 }
 
 function openAddAppointmentModal() {
+  const customers = Array.isArray(APP_CONFIG.saleCustomers)
+    ? APP_CONFIG.saleCustomers
+    : [];
+  const customerOptions =
+    customers.length > 0
+      ? customers.map((customer) => ({
+          value: String(customer.id ?? ""),
+          label: String(customer.name ?? "Customer"),
+        }))
+      : [{ value: "1", label: "Walk-in Customer" }];
+
   openEntityModal({
     key: "appointment",
     page: "appointments",
@@ -2261,11 +2348,11 @@ function openAddAppointmentModal() {
         placeholder: "Appointment title",
       },
       {
-        label: "Customer ID",
+        label: "Customer",
         name: "customer_id",
-        type: "number",
+        type: "select",
         required: true,
-        placeholder: "Enter customer ID",
+        options: customerOptions,
       },
       {
         label: "Date & Time",
@@ -3459,6 +3546,37 @@ function confirmDeleteProduct(id) {
   showToast("success", "Product deleted successfully!");
 }
 
+function viewEmployee(target) {
+  if (!target) {
+    return;
+  }
+
+  const id = Number.parseInt(target.getAttribute("data-value") || "0", 10);
+  const name = target.getAttribute("data-name") || "-";
+  const position = target.getAttribute("data-position") || "N/A";
+  const phone = target.getAttribute("data-phone") || "N/A";
+  const email = target.getAttribute("data-email") || "N/A";
+  const salary =
+    Number.parseFloat(target.getAttribute("data-salary") || "0") || 0;
+  const status = target.getAttribute("data-status") || "Active";
+
+  const content = `
+    <div style="display:grid; gap:10px;">
+      <div><strong>ID:</strong> ${escapeHtml(String(Number.isFinite(id) ? id : 0))}</div>
+      <div><strong>Name:</strong> ${escapeHtml(name)}</div>
+      <div><strong>Position:</strong> ${escapeHtml(position)}</div>
+      <div><strong>Phone:</strong> ${escapeHtml(phone)}</div>
+      <div><strong>Email:</strong> ${escapeHtml(email)}</div>
+      <div><strong>Salary:</strong> Tsh ${escapeHtml(formatMoney(salary))}</div>
+      <div><strong>Status:</strong> ${escapeHtml(status)}</div>
+    </div>
+  `;
+
+  openModal("Employee Details", content, [
+    { text: "Close", class: "btn-primary", onclick: "closeModal()" },
+  ]);
+}
+
 function viewCustomer(id) {
   const customerId = Number.parseInt(id, 10);
   if (!Number.isFinite(customerId) || customerId <= 0) {
@@ -3750,18 +3868,133 @@ function receiveCustomerPayment(id) {
 }
 
 function deleteCustomer(id) {
+  const customerId = Number.parseInt(id, 10);
+  if (!Number.isFinite(customerId) || customerId <= 0) {
+    showToast("error", "Invalid customer ID");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
   const content = `
+        <form id="deleteCustomerForm" method="POST" action="?page=customers">
+            <input type="hidden" name="action" value="update_entity">
+            <input type="hidden" name="entity" value="customer_delete">
+            <input type="hidden" name="id" value="${customerId}">
+            <input type="hidden" name="csrf_token" value="${csrfToken}">
         <div style="text-align: center; padding: 20px 0;">
             <i class="fa-solid fa-user-minus" style="font-size: 48px; color: #EF4444; margin-bottom: 16px;"></i>
             <p style="margin: 0; font-size: 16px;">Are you sure you want to delete this customer?</p>
+            <p style="margin: 8px 0 0 0; font-size: 13px; color: #6B7280;">This action cannot be undone.</p>
         </div>
+        </form>
     `;
   openModal("Confirm Delete", content, [
     { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
     {
       text: "Delete",
       class: "btn-danger",
-      onclick: 'closeModal(); showToast("success", "Customer deleted!")',
+      onclick: 'document.getElementById("deleteCustomerForm").requestSubmit()',
+    },
+  ]);
+}
+
+function deleteAppointment(id) {
+  const appointmentId = Number.parseInt(id, 10);
+  if (!Number.isFinite(appointmentId) || appointmentId <= 0) {
+    showToast("error", "Invalid appointment ID");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const content = `
+        <form id="deleteAppointmentForm" method="POST" action="?page=appointments">
+            <input type="hidden" name="action" value="update_entity">
+            <input type="hidden" name="entity" value="appointment_delete">
+            <input type="hidden" name="id" value="${appointmentId}">
+            <input type="hidden" name="csrf_token" value="${csrfToken}">
+            <div style="text-align: center; padding: 20px 0;">
+                <i class="fa-solid fa-calendar-xmark" style="font-size: 48px; color: #EF4444; margin-bottom: 16px;"></i>
+                <p style="margin: 0; font-size: 16px;">Are you sure you want to delete this appointment?</p>
+                <p style="margin: 8px 0 0 0; font-size: 13px; color: #6B7280;">This action cannot be undone.</p>
+            </div>
+        </form>
+    `;
+
+  openModal("Confirm Delete", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: "Delete",
+      class: "btn-danger",
+      onclick:
+        'document.getElementById("deleteAppointmentForm").requestSubmit()',
+    },
+  ]);
+}
+
+function viewAppointment(target) {
+  if (!target) {
+    return;
+  }
+
+  const id = Number.parseInt(target.getAttribute("data-value") || "0", 10);
+  const title = target.getAttribute("data-title") || "-";
+  const customer = target.getAttribute("data-customer") || "-";
+  const date = target.getAttribute("data-date") || "-";
+  const status = target.getAttribute("data-status") || "Scheduled";
+
+  const content = `
+    <div style="display:grid; gap:10px;">
+      <div><strong>ID:</strong> ${escapeHtml(String(Number.isFinite(id) ? id : 0))}</div>
+      <div><strong>Title:</strong> ${escapeHtml(title)}</div>
+      <div><strong>Customer:</strong> ${escapeHtml(customer)}</div>
+      <div><strong>Date:</strong> ${escapeHtml(date)}</div>
+      <div><strong>Status:</strong> ${escapeHtml(status)}</div>
+    </div>
+  `;
+
+  openModal("Appointment Details", content, [
+    { text: "Close", class: "btn-primary", onclick: "closeModal()" },
+  ]);
+}
+
+function updateAppointmentStatus(id, status) {
+  const appointmentId = Number.parseInt(id, 10);
+  const normalizedStatus = String(status || "").trim();
+  if (!Number.isFinite(appointmentId) || appointmentId <= 0) {
+    showToast("error", "Invalid appointment ID");
+    return;
+  }
+  if (!["Completed", "Cancelled"].includes(normalizedStatus)) {
+    showToast("error", "Invalid appointment status");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const iconClass =
+    normalizedStatus === "Completed" ? "fa-circle-check" : "fa-ban";
+  const buttonClass =
+    normalizedStatus === "Completed" ? "btn-primary" : "btn-danger";
+  const content = `
+        <form id="appointmentStatusForm" method="POST" action="?page=appointments">
+            <input type="hidden" name="action" value="update_entity">
+            <input type="hidden" name="entity" value="appointment_status">
+            <input type="hidden" name="id" value="${appointmentId}">
+            <input type="hidden" name="status" value="${escapeHtml(normalizedStatus)}">
+            <input type="hidden" name="csrf_token" value="${csrfToken}">
+            <div style="text-align: center; padding: 20px 0;">
+                <i class="fa-solid ${iconClass}" style="font-size: 48px; color: #4F46E5; margin-bottom: 16px;"></i>
+                <p style="margin: 0; font-size: 16px;">Mark this appointment as ${escapeHtml(normalizedStatus)}?</p>
+            </div>
+        </form>
+    `;
+
+  openModal("Update Appointment", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: normalizedStatus,
+      class: buttonClass,
+      onclick:
+        'document.getElementById("appointmentStatusForm").requestSubmit()',
     },
   ]);
 }
