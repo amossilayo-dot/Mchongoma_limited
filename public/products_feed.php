@@ -29,6 +29,7 @@ try {
     $payload = array_map(static fn(array $item) => [
         'id' => (int) ($item['id'] ?? 0),
         'name' => (string) ($item['name'] ?? ''),
+        'sku' => (string) ($item['sku'] ?? ''),
         'category' => (string) ($item['category'] ?? ''),
         'stock_qty' => (int) ($item['stock_qty'] ?? 0),
         'unit_price' => (float) ($item['unit_price'] ?? 0),

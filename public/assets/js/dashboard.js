@@ -948,9 +948,31 @@ function initActionBindings() {
       return;
     }
 
+    if (action === "viewPO") {
+      viewPurchaseOrder(target);
+      return;
+    }
+
+    if (action === "updatePOStatus") {
+      const status = target.getAttribute("data-status") || "";
+      updatePurchaseOrderStatus(parseInt(value, 10), status);
+      return;
+    }
+
+    if (action === "viewInvoice") {
+      viewInvoice(target);
+      return;
+    }
+
     if (action === "updateReceivingStatus") {
       const status = target.getAttribute("data-status") || "";
       updateReceivingStatus(parseInt(value, 10), status);
+      return;
+    }
+
+    if (action === "updateInvoiceStatus") {
+      const status = target.getAttribute("data-status") || "";
+      updateInvoiceStatus(parseInt(value, 10), status);
       return;
     }
 
@@ -1212,54 +1234,6 @@ function showNewSaleModal() {
   let loadedProducts = [...products];
 
   const walkInCustomer =
-    customers.find(
-      (customer) =>
-        String(customer?.name || "")
-          .trim()
-          .toLowerCase() === "walk-in customer",
-    ) || null;
-
-  const orderedCustomers = walkInCustomer
-    ? [
-        walkInCustomer,
-        ...customers.filter((customer) => customer !== walkInCustomer),
-      ]
-    : customers;
-
-  const customerOptions =
-    orderedCustomers.length > 0
-      ? orderedCustomers
-          .map((customer, index) => {
-            const isWalkIn =
-              String(customer?.name || "")
-                .trim()
-                .toLowerCase() === "walk-in customer";
-            const selected = isWalkIn || (!walkInCustomer && index === 0);
-            return `<option value="${escapeHtml(customer.id)}"${selected ? " selected" : ""}>${escapeHtml(customer.name || "")}</option>`;
-          })
-          .join("")
-      : '<option value="1" selected>Walk-in Customer</option>';
-
-  const content = `
-        <form id="newSaleForm" method="POST" action="?page=sales">
-            <input type="hidden" name="action" value="create_entity">
-            <input type="hidden" name="entity" value="sale">
-            <input type="hidden" name="csrf_token" value="${csrfToken}">
-            <div class="form-group">
-                <label>Customer</label>
-                <select name="customer_id" required>
-                    ${customerOptions}
-                </select>
-            </div>
-            <div class="form-group">
-                <label>Product</label>
-              <input type="hidden" id="saleProductId" name="product_id" value="">
-              <input type="text" id="saleProductSearch" placeholder="Search products..." class="form-control" autocomplete="off">
-              <div id="saleProductResults" class="sales-product-results" style="display:none; margin-top:8px; max-height:300px; overflow:auto; border:1px solid #E5E7EB; border-radius:10px; background:#fff;"></div>
-            </div>
-            <div class="form-group">
-                <label>Quantity</label>
-                <input id="saleQuantity" type="number" name="quantity" placeholder="Enter quantity" required min="1" value="1">
             </div>
             <div class="form-group">
                 <label>Amount (Tsh)</label>
@@ -2160,54 +2134,6 @@ function editUserPermissions(userId, userName) {
   const rawOverrides = APP_CONFIG.userPermissionOverrides || {};
   const userOverrides =
     rawOverrides[userId] || rawOverrides[String(userId)] || {};
-
-  const pageOptions = pages
-    .map((page) => {
-      const key = escapeHtml(page.key || "");
-      const title = escapeHtml(page.title || page.key || "");
-      const currentValue = Object.prototype.hasOwnProperty.call(
-        userOverrides,
-        page.key,
-      )
-        ? userOverrides[page.key]
-          ? "allow"
-          : "deny"
-        : "default";
-
-      return `
-        <div class="form-group" style="margin-bottom:10px;">
-            <label style="display:flex; justify-content:space-between; gap:8px; align-items:center;">
-                <span>${title}</span>
-                <select name="permission_mode[${key}]" style="max-width:160px;">
-                    <option value="default" ${currentValue === "default" ? "selected" : ""}>Role Default</option>
-                    <option value="allow" ${currentValue === "allow" ? "selected" : ""}>Allow</option>
-                    <option value="deny" ${currentValue === "deny" ? "selected" : ""}>Deny</option>
-                </select>
-            </label>
-            <input type="hidden" name="page_keys[]" value="${key}">
-        </div>
-      `;
-    })
-    .join("");
-
-  const content = `
-    <form id="editUserPermissionsForm" method="POST" action="?page=users">
-      <input type="hidden" name="action" value="update_entity">
-      <input type="hidden" name="entity" value="user_permission_override">
-      <input type="hidden" name="id" value="${userId}">
-      <input type="hidden" name="csrf_token" value="${csrfToken}">
-      <div class="form-group">
-        <label>User</label>
-        <input type="text" value="${safeName}" readonly>
-      </div>
-      <p style="margin:0 0 10px 0; color:#6B7280;">Set page access overrides for this user. Role Default keeps standard role permissions.</p>
-      <div style="max-height:320px; overflow:auto; padding-right:6px;">
-        ${pageOptions}
-      </div>
-    </form>
-  `;
-
-  openModal("Custom Permissions", content, [
     { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
     {
       text: "Save Permissions",
@@ -2327,6 +2253,27 @@ function openAddExpenseModal() {
 }
 
 function openAddInvoiceModal() {
+  const customers = Array.isArray(APP_CONFIG.saleCustomers)
+    ? APP_CONFIG.saleCustomers
+    : [];
+
+  if (customers.length === 0) {
+    showToast(
+      "warning",
+      "Please add at least one customer before creating an invoice.",
+    );
+    return;
+  }
+
+  const customerOptions = customers
+    .map((customer) => ({
+      value: String(customer.id ?? ""),
+      label: String(customer.name ?? `Customer #${customer.id || ""}`),
+    }))
+    .sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: "base" }),
+    );
+
   openEntityModal({
     key: "invoice",
     page: "invoices",
@@ -2337,18 +2284,33 @@ function openAddInvoiceModal() {
     successMessage: "Invoice created successfully!",
     fields: [
       {
-        label: "Customer ID",
+        label: "Customer",
         name: "customer_id",
-        type: "number",
+        type: "select",
         required: true,
-        placeholder: "Enter customer ID",
+        searchable: true,
+        searchPlaceholder: "Search customer by name...",
+        options: customerOptions,
       },
       {
         label: "Amount (Tsh)",
         name: "amount",
         type: "number",
         required: true,
+        min: 1,
+        step: 0.01,
         placeholder: "Enter amount",
+      },
+      {
+        label: "Status",
+        name: "status",
+        type: "select",
+        required: true,
+        options: [
+          { value: "Pending", label: "Pending" },
+          { value: "Paid", label: "Paid" },
+          { value: "Cancelled", label: "Cancelled" },
+        ],
       },
     ],
   });
@@ -2384,6 +2346,9 @@ function openAddDeliveryModal() {
 function openAddReceivingModal() {
   const suppliers = Array.isArray(APP_CONFIG.suppliers)
     ? APP_CONFIG.suppliers
+    : [];
+  const purchaseOrders = Array.isArray(APP_CONFIG.receivingPurchaseOrders)
+    ? APP_CONFIG.receivingPurchaseOrders
     : [];
   const activeSuppliers = suppliers.filter(
     (supplier) =>
@@ -2421,6 +2386,19 @@ function openAddReceivingModal() {
     })
     .join("");
 
+  const purchaseOrderOptions = purchaseOrders
+    .map((order) => {
+      const orderId = Number.parseInt(String(order?.id || "0"), 10);
+      const poNo = String(order?.po_no || "").trim();
+      const supplierName = String(order?.supplier_name || "Supplier").trim();
+      const status = String(order?.status || "Pending").trim();
+      const amount = Number.parseFloat(String(order?.amount || "0"));
+      const amountLabel = Number.isFinite(amount) ? formatMoney(amount) : "0";
+      const label = `${poNo || `PO #${orderId}`} - ${supplierName} (${status}) Tsh ${amountLabel}`;
+      return `<option value="${escapeHtml(String(orderId))}">${escapeHtml(label)}</option>`;
+    })
+    .join("");
+
   const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
   const content = `
     <form id="receivingForm" method="POST" action="?page=receiving">
@@ -2430,8 +2408,17 @@ function openAddReceivingModal() {
       <input type="hidden" name="items_json" id="receivingItemsJson" value="[]">
 
       <div class="form-group">
+        <label>Linked Purchase Order (Optional)</label>
+        <select name="purchase_order_id" id="receivingPurchaseOrder">
+          <option value="">No linked PO</option>
+          ${purchaseOrderOptions}
+        </select>
+        <small style="display:block; margin-top:6px; color:#6B7280;">Selecting a PO auto-fills supplier and amount. Completing this receiving auto-marks that PO as Received.</small>
+      </div>
+
+      <div class="form-group">
         <label>Supplier</label>
-        <select name="supplier_id" required>
+        <select name="supplier_id" id="receivingSupplier" required>
           <option value="">Select supplier</option>
           ${supplierOptions}
         </select>
@@ -2487,6 +2474,16 @@ function openAddReceivingModal() {
   const itemsJsonInput = document.getElementById("receivingItemsJson");
   const calculatedHint = document.getElementById("receivingCalculatedHint");
   const useCalculatedBtn = document.getElementById("receivingUseCalculatedBtn");
+  const purchaseOrderInput = document.getElementById("receivingPurchaseOrder");
+  const supplierInput = document.getElementById("receivingSupplier");
+
+  const purchaseOrderById = purchaseOrders.reduce((acc, order) => {
+    const orderId = Number.parseInt(String(order?.id || "0"), 10);
+    if (Number.isFinite(orderId) && orderId > 0) {
+      acc[orderId] = order;
+    }
+    return acc;
+  }, {});
 
   if (
     !form ||
@@ -2495,7 +2492,9 @@ function openAddReceivingModal() {
     !amountInput ||
     !itemsJsonInput ||
     !calculatedHint ||
-    !useCalculatedBtn
+    !useCalculatedBtn ||
+    !purchaseOrderInput ||
+    !supplierInput
   ) {
     return;
   }
@@ -2643,12 +2642,44 @@ function openAddReceivingModal() {
     amountInput.value = String(total);
   });
 
+  purchaseOrderInput.addEventListener("change", () => {
+    const selectedId = Number.parseInt(
+      String(purchaseOrderInput.value || "0"),
+      10,
+    );
+    if (!Number.isFinite(selectedId) || selectedId <= 0) {
+      return;
+    }
+
+    const selectedOrder = purchaseOrderById[selectedId];
+    if (!selectedOrder) {
+      return;
+    }
+
+    const linkedSupplierId = Number.parseInt(
+      String(selectedOrder.supplier_id || "0"),
+      10,
+    );
+    if (Number.isFinite(linkedSupplierId) && linkedSupplierId > 0) {
+      supplierInput.value = String(linkedSupplierId);
+    }
+
+    const linkedAmount = Number.parseFloat(String(selectedOrder.amount || "0"));
+    if (Number.isFinite(linkedAmount) && linkedAmount > 0) {
+      amountInput.dataset.manual = "1";
+      amountInput.value = String(linkedAmount);
+    }
+  });
+
   form.addEventListener("submit", (event) => {
-    const supplierInput = form.querySelector('select[name="supplier_id"]');
     const supplierId = String(supplierInput?.value || "").trim();
     const payload = serializeItems();
     const items = payload.items;
     const total = Number.parseFloat(String(amountInput.value || "0"));
+    const selectedPoId = Number.parseInt(
+      String(purchaseOrderInput.value || "0"),
+      10,
+    );
 
     if (supplierId === "") {
       event.preventDefault();
@@ -2665,6 +2696,27 @@ function openAddReceivingModal() {
     if (!Number.isFinite(total) || total <= 0) {
       event.preventDefault();
       showToast("warning", "Receiving total must be greater than zero.");
+      return;
+    }
+
+    if (Number.isFinite(selectedPoId) && selectedPoId > 0) {
+      const linkedOrder = purchaseOrderById[selectedPoId];
+      const linkedSupplierId = Number.parseInt(
+        String(linkedOrder?.supplier_id || "0"),
+        10,
+      );
+
+      if (
+        Number.isFinite(linkedSupplierId) &&
+        linkedSupplierId > 0 &&
+        Number.parseInt(supplierId, 10) !== linkedSupplierId
+      ) {
+        event.preventDefault();
+        showToast(
+          "warning",
+          "Selected supplier must match the linked purchase order supplier.",
+        );
+      }
     }
   });
 
@@ -2699,32 +2751,445 @@ function openAddQuotationModal() {
   });
 }
 
-function openAddPOModal() {
-  openEntityModal({
-    key: "purchaseOrder",
-    page: "purchase-orders",
-    entity: "purchase_order",
-    title: "Create Purchase Order",
-    entityName: "Purchase Order",
-    submitText: "Create PO",
-    successMessage: "Purchase order created successfully!",
-    fields: [
-      {
-        label: "Supplier ID",
-        name: "supplier_id",
-        type: "number",
-        required: true,
-        placeholder: "Enter supplier ID",
-      },
-      {
-        label: "Amount (Tsh)",
-        name: "amount",
-        type: "number",
-        required: true,
-        placeholder: "Enter amount",
-      },
-    ],
+async function openAddPOModal() {
+  const suppliers = Array.isArray(APP_CONFIG.suppliers)
+    ? APP_CONFIG.suppliers
+    : [];
+  const fallbackProducts = Array.isArray(APP_CONFIG.poProducts)
+    ? APP_CONFIG.poProducts
+    : Array.isArray(APP_CONFIG.inventoryProducts)
+      ? APP_CONFIG.inventoryProducts
+      : [];
+
+  const fetchLatestProducts = async () => {
+    try {
+      const response = await fetch(
+        `products_feed.php?limit=1000&_=${Date.now()}`,
+        {
+          method: "GET",
+          cache: "no-store",
+          credentials: "same-origin",
+        },
+      );
+      if (!response.ok) {
+        return null;
+      }
+
+      const payload = await response.json();
+      if (
+        !payload ||
+        payload.success !== true ||
+        !Array.isArray(payload.items)
+      ) {
+        return null;
+      }
+
+      return payload.items;
+    } catch (error) {
+      return null;
+    }
+  };
+
+  const latestProducts = await fetchLatestProducts();
+  const products = Array.isArray(latestProducts)
+    ? latestProducts
+    : fallbackProducts;
+  const productSourceLabel = Array.isArray(latestProducts) ? "Live" : "Cached";
+  const activeSuppliers = suppliers.filter(
+    (supplier) =>
+      String(supplier.status || "Active").toLowerCase() !== "inactive",
+  );
+
+  if (activeSuppliers.length === 0) {
+    showToast(
+      "warning",
+      "Please add an active supplier before creating a purchase order.",
+    );
+    return;
+  }
+
+  if (products.length === 0) {
+    showToast(
+      "warning",
+      "Please add at least one product in inventory before creating a purchase order.",
+    );
+    return;
+  }
+
+  const supplierOptions = activeSuppliers
+    .map(
+      (supplier) =>
+        `<option value="${escapeHtml(String(supplier.id ?? ""))}">${escapeHtml(String(supplier.name || `Supplier #${supplier.id || ""}`))}</option>`,
+    )
+    .join("");
+
+  const toNumber = (value, fallback = 0) => {
+    const parsed = Number.parseFloat(String(value ?? ""));
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
+  const normalizedProducts = products
+    .map((product) => {
+      const id = Number.parseInt(String(product.id ?? "0"), 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        return null;
+      }
+
+      const name = String(product.name ?? "Product").trim() || "Product";
+      const sku = String(product.sku ?? "").trim();
+      const stockQtyRaw = Number.parseInt(String(product.stock_qty ?? "0"), 10);
+      const stockQty = Number.isFinite(stockQtyRaw) ? stockQtyRaw : 0;
+      const unitPrice = toNumber(product.unit_price, 0);
+
+      return {
+        id,
+        name,
+        sku,
+        stockQty,
+        unitPrice,
+        searchLabel: sku
+          ? `${id} - ${name} (${sku}) - Stock: ${stockQty}`
+          : `${id} - ${name} - Stock: ${stockQty}`,
+      };
+    })
+    .filter(Boolean);
+
+  const productsById = new Map(
+    normalizedProducts.map((product) => [product.id, product]),
+  );
+
+  const productSearchOptions = normalizedProducts
+    .map(
+      (product) =>
+        `<option value="${escapeHtml(product.searchLabel)}"></option>`,
+    )
+    .join("");
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const content = `
+    <form id="purchaseOrderForm" method="POST" action="?page=purchase-orders">
+      <input type="hidden" name="action" value="create_entity">
+      <input type="hidden" name="entity" value="purchase_order">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <input type="hidden" name="items_json" id="poItemsJson" value="[]">
+
+      <div class="form-group">
+        <label>Supplier</label>
+        <select name="supplier_id" required>
+          <option value="">Select supplier</option>
+          ${supplierOptions}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Expected Delivery Date</label>
+        <input type="date" name="expected_delivery_date">
+      </div>
+
+      <div class="form-group">
+        <label>Notes</label>
+        <textarea name="notes" rows="3" placeholder="What this PO must include, terms, or delivery instructions"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+          <span>Total Amount (Tsh)</span>
+          <button type="button" id="poUseCalculatedBtn" class="btn btn-secondary" style="padding:6px 10px; font-size:12px;">Use Calculated</button>
+        </label>
+        <input type="number" name="amount" id="poAmount" min="0" step="0.01" value="0">
+        <small id="poCalculatedHint" style="display:block; margin-top:6px; color:#6B7280;">Calculated from items: Tsh 0</small>
+      </div>
+
+      <div class="form-group">
+        <label>Items</label>
+        <datalist id="poProductDatalist">
+          ${productSearchOptions}
+        </datalist>
+        <small style="display:block; margin-bottom:8px; color:#6B7280;">
+          Search by Product ID, name, or SKU. Stock is visible for each selected product.
+        </small>
+        <small id="poProductsLoadedNote" style="display:block; margin-bottom:8px; color:#4B5563; font-weight:600;">
+          Products loaded: ${normalizedProducts.length.toLocaleString()} (${productSourceLabel})
+        </small>
+        <div id="poItemsContainer" style="display:grid; gap:8px;"></div>
+        <button type="button" class="btn btn-secondary" id="addPOItemBtn" style="margin-top:8px;">
+          <i class="fa-solid fa-plus"></i> Add Item
+        </button>
+      </div>
+    </form>
+  `;
+
+  openModal("Create Purchase Order", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: "Create PO",
+      class: "btn-primary",
+      onclick: 'document.getElementById("purchaseOrderForm").requestSubmit()',
+    },
+  ]);
+
+  const form = document.getElementById("purchaseOrderForm");
+  const itemsContainer = document.getElementById("poItemsContainer");
+  const addItemBtn = document.getElementById("addPOItemBtn");
+  const amountInput = document.getElementById("poAmount");
+  const itemsJsonInput = document.getElementById("poItemsJson");
+  const calculatedHint = document.getElementById("poCalculatedHint");
+  const useCalculatedBtn = document.getElementById("poUseCalculatedBtn");
+
+  if (
+    !form ||
+    !itemsContainer ||
+    !addItemBtn ||
+    !amountInput ||
+    !itemsJsonInput ||
+    !calculatedHint ||
+    !useCalculatedBtn
+  ) {
+    return;
+  }
+
+  const formatProductLabel = (product) => {
+    if (!product) {
+      return "";
+    }
+
+    return product.sku
+      ? `${product.id} - ${product.name} (${product.sku}) - Stock: ${product.stockQty}`
+      : `${product.id} - ${product.name} - Stock: ${product.stockQty}`;
+  };
+
+  const findProductBySearch = (rawValue) => {
+    const value = String(rawValue || "").trim();
+    if (value === "") {
+      return null;
+    }
+
+    if (/^\d+$/.test(value)) {
+      return productsById.get(Number.parseInt(value, 10)) || null;
+    }
+
+    const idPrefixMatch = value.match(/^(\d+)\s*-/);
+    if (idPrefixMatch) {
+      const prefixedId = Number.parseInt(idPrefixMatch[1], 10);
+      return productsById.get(prefixedId) || null;
+    }
+
+    const needle = value.toLowerCase();
+    return (
+      normalizedProducts.find((product) => {
+        const haystack =
+          `${product.id} ${product.name} ${product.sku}`.toLowerCase();
+        return haystack.includes(needle);
+      }) || null
+    );
+  };
+
+  const setRowProduct = (row, product, forceUnitCost = true) => {
+    if (!row) {
+      return;
+    }
+
+    const searchInput = row.querySelector(".po-item-product-search");
+    const productIdInput = row.querySelector(".po-item-product-id");
+    const stockLabel = row.querySelector(".po-item-stock");
+    const unitCostInput = row.querySelector(".po-item-unit-cost");
+
+    if (!searchInput || !productIdInput || !stockLabel || !unitCostInput) {
+      return;
+    }
+
+    if (!product) {
+      productIdInput.value = "";
+      stockLabel.textContent = "Stock: -";
+      return;
+    }
+
+    searchInput.value = formatProductLabel(product);
+    productIdInput.value = String(product.id);
+    stockLabel.textContent = `Stock: ${product.stockQty}`;
+    if (forceUnitCost || String(unitCostInput.value || "").trim() === "") {
+      unitCostInput.value = String(product.unitPrice);
+    }
+  };
+
+  const createItemRow = () => {
+    const row = document.createElement("div");
+    row.className = "po-item-row";
+    row.style.display = "grid";
+    row.style.gridTemplateColumns = "1fr";
+    row.style.gap = "8px";
+    row.style.alignItems = "center";
+    row.style.padding = "8px";
+    row.style.border = "1px solid #E5E7EB";
+    row.style.borderRadius = "8px";
+    row.style.background = "#FFFFFF";
+
+    row.innerHTML = `
+      <div style="display:grid; gap:6px; min-width:0;">
+        <input type="search" class="po-item-product-search" list="poProductDatalist" placeholder="Search product by ID, name, or SKU" required>
+        <input type="hidden" class="po-item-product-id" value="">
+        <small class="po-item-stock" style="color:#6B7280;">Stock: -</small>
+      </div>
+      <div style="display:grid; grid-template-columns:minmax(70px, 0.8fr) minmax(110px, 1fr) minmax(120px, 1fr) auto; gap:8px; align-items:center;">
+        <input type="number" class="po-item-qty" min="1" step="1" value="1" required title="Quantity">
+        <input type="number" class="po-item-unit-cost" min="0" step="0.01" value="0" required title="Unit Cost">
+        <div class="po-item-line-total" style="padding:10px 12px; border:1px solid #E5E7EB; border-radius:8px; background:#F9FAFB; white-space:nowrap; font-weight:600;">Tsh 0</div>
+        <button type="button" class="btn btn-secondary po-item-remove" title="Remove item"><i class="fa-solid fa-minus"></i></button>
+      </div>
+    `;
+
+    const searchInput = row.querySelector(".po-item-product-search");
+    if (searchInput) {
+      searchInput.addEventListener("change", () => {
+        const product = findProductBySearch(searchInput.value);
+        if (!product) {
+          showToast("warning", "Select a valid product from the search list.");
+          setRowProduct(row, null, false);
+          serializeItems();
+          return;
+        }
+
+        setRowProduct(row, product, true);
+        serializeItems();
+      });
+
+      searchInput.addEventListener("blur", () => {
+        const product = findProductBySearch(searchInput.value);
+        if (product) {
+          setRowProduct(row, product, false);
+          serializeItems();
+        }
+      });
+    }
+
+    const defaultProduct = normalizedProducts[0] || null;
+    setRowProduct(row, defaultProduct, true);
+
+    return row;
+  };
+
+  const serializeItems = () => {
+    const rows = Array.from(itemsContainer.querySelectorAll(".po-item-row"));
+    const items = [];
+    let total = 0;
+
+    rows.forEach((row) => {
+      const productIdInput = row.querySelector(".po-item-product-id");
+      const qtyInput = row.querySelector(".po-item-qty");
+      const unitCostInput = row.querySelector(".po-item-unit-cost");
+      const lineTotalInput = row.querySelector(".po-item-line-total");
+
+      const productId = Number.parseInt(
+        String(productIdInput?.value || "0"),
+        10,
+      );
+      const quantity = Number.parseInt(String(qtyInput?.value || "0"), 10);
+      const unitCost = Number.parseFloat(String(unitCostInput?.value || "0"));
+
+      if (
+        !Number.isFinite(productId) ||
+        productId <= 0 ||
+        !Number.isFinite(quantity) ||
+        quantity <= 0 ||
+        !Number.isFinite(unitCost) ||
+        unitCost < 0
+      ) {
+        return;
+      }
+
+      const lineTotal = quantity * unitCost;
+      if (lineTotalInput) {
+        lineTotalInput.textContent = `Tsh ${formatMoney(lineTotal)}`;
+      }
+      total += lineTotal;
+      items.push({
+        product_id: productId,
+        quantity,
+        unit_cost: unitCost,
+      });
+    });
+
+    itemsJsonInput.value = JSON.stringify(items);
+    calculatedHint.textContent = `Calculated from items: Tsh ${formatMoney(total)}`;
+    if (amountInput.dataset.manual !== "1") {
+      amountInput.value = String(total.toFixed(2));
+    }
+
+    return { items, total };
+  };
+
+  amountInput.dataset.manual = "0";
+  amountInput.addEventListener("input", () => {
+    amountInput.dataset.manual = "1";
   });
+
+  useCalculatedBtn.addEventListener("click", () => {
+    const { total } = serializeItems();
+    amountInput.dataset.manual = "0";
+    amountInput.value = String(total.toFixed(2));
+  });
+
+  addItemBtn.addEventListener("click", () => {
+    itemsContainer.appendChild(createItemRow());
+    serializeItems();
+  });
+
+  itemsContainer.addEventListener("click", (event) => {
+    const removeBtn = event.target.closest(".po-item-remove");
+    if (!removeBtn) {
+      return;
+    }
+
+    const row = removeBtn.closest(".po-item-row");
+    if (!row) {
+      return;
+    }
+
+    if (itemsContainer.querySelectorAll(".po-item-row").length <= 1) {
+      showToast("warning", "A purchase order must have at least one item.");
+      return;
+    }
+
+    row.remove();
+    serializeItems();
+  });
+
+  itemsContainer.addEventListener("input", () => {
+    serializeItems();
+  });
+
+  form.addEventListener("submit", (event) => {
+    const supplierInput = form.querySelector('select[name="supplier_id"]');
+    const supplierId = String(supplierInput?.value || "").trim();
+    const payload = serializeItems();
+    const enteredAmount = Number.parseFloat(String(amountInput.value || "0"));
+
+    if (supplierId === "") {
+      event.preventDefault();
+      showToast("warning", "Please select a supplier.");
+      return;
+    }
+
+    if (payload.items.length === 0) {
+      event.preventDefault();
+      showToast("warning", "Add at least one valid PO item.");
+      return;
+    }
+
+    if (!Number.isFinite(enteredAmount) || enteredAmount <= 0) {
+      event.preventDefault();
+      showToast("warning", "PO amount must be greater than zero.");
+      return;
+    }
+
+    if (!Number.isFinite(payload.total) || payload.total <= 0) {
+      event.preventDefault();
+      showToast("warning", "PO items must produce a valid calculated total.");
+    }
+  });
+
+  itemsContainer.appendChild(createItemRow());
+  serializeItems();
 }
 
 function openAddReturnModal() {
@@ -4080,6 +4545,17 @@ function viewReceiving(id) {
 
   const receivingNo = escapeHtml(String(record.receiving_no || "-"));
   const supplierName = escapeHtml(String(record.supplier_name || "-"));
+  const purchaseOrderId = Number.parseInt(
+    String(record.purchase_order_id || "0"),
+    10,
+  );
+  const purchaseOrderNo = String(record.purchase_order_no || "").trim();
+  const linkedPoLabel =
+    Number.isFinite(purchaseOrderId) && purchaseOrderId > 0
+      ? escapeHtml(
+          purchaseOrderNo !== "" ? purchaseOrderNo : `PO #${purchaseOrderId}`,
+        )
+      : "-";
   const status = escapeHtml(String(record.status || "Pending"));
   const createdAtRaw = String(record.created_at || "");
   const createdAt = createdAtRaw
@@ -4099,6 +4575,7 @@ function viewReceiving(id) {
     <div style="display:grid; gap:10px;">
       <div><strong>Receiving No:</strong> ${receivingNo}</div>
       <div><strong>Supplier:</strong> ${supplierName}</div>
+      <div><strong>Linked PO:</strong> ${linkedPoLabel}</div>
       <div><strong>Status:</strong> ${status}</div>
       <div><strong>Date:</strong> ${createdLabel}</div>
       <div><strong>Total Amount:</strong> Tsh ${amountLabel}</div>
@@ -4170,6 +4647,57 @@ function updateReceivingStatus(id, status) {
       text: normalizedStatus,
       class: buttonClass,
       onclick: 'document.getElementById("receivingStatusForm").requestSubmit()',
+    },
+  ]);
+}
+
+function updateInvoiceStatus(id, status) {
+  const invoiceId = Number.parseInt(id, 10);
+  const normalizedStatus = String(status || "").trim();
+  if (!Number.isFinite(invoiceId) || invoiceId <= 0) {
+    showToast("error", "Invalid invoice ID");
+    return;
+  }
+
+  if (!["Pending", "Paid", "Cancelled"].includes(normalizedStatus)) {
+    showToast("error", "Invalid invoice status");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const iconClass =
+    normalizedStatus === "Paid"
+      ? "fa-circle-check"
+      : normalizedStatus === "Cancelled"
+        ? "fa-ban"
+        : "fa-hourglass-half";
+  const buttonClass =
+    normalizedStatus === "Paid"
+      ? "btn-primary"
+      : normalizedStatus === "Cancelled"
+        ? "btn-danger"
+        : "btn-secondary";
+
+  const content = `
+    <form id="invoiceStatusForm" method="POST" action="?page=invoices">
+      <input type="hidden" name="action" value="update_entity">
+      <input type="hidden" name="entity" value="invoice_status">
+      <input type="hidden" name="id" value="${invoiceId}">
+      <input type="hidden" name="status" value="${escapeHtml(normalizedStatus)}">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <div style="text-align: center; padding: 20px 0;">
+        <i class="fa-solid ${iconClass}" style="font-size: 48px; color: #4F46E5; margin-bottom: 16px;"></i>
+        <p style="margin: 0; font-size: 16px;">Set invoice status to ${escapeHtml(normalizedStatus)}?</p>
+      </div>
+    </form>
+  `;
+
+  openModal("Update Invoice", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: normalizedStatus,
+      class: buttonClass,
+      onclick: 'document.getElementById("invoiceStatusForm").requestSubmit()',
     },
   ]);
 }
@@ -4325,6 +4853,53 @@ function viewCustomer(id) {
         closeModal();
         receiveCustomerPayment(customerId);
       },
+    },
+  ]);
+}
+
+function updatePurchaseOrderStatus(id, status) {
+  const purchaseOrderId = Number.parseInt(id, 10);
+  const normalizedStatus = String(status || "").trim();
+  if (!Number.isFinite(purchaseOrderId) || purchaseOrderId <= 0) {
+    showToast("error", "Invalid purchase order ID");
+    return;
+  }
+
+  if (!["Approved", "Received", "Cancelled"].includes(normalizedStatus)) {
+    showToast("error", "Invalid purchase order status");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const iconClass =
+    normalizedStatus === "Received"
+      ? "fa-box-open"
+      : normalizedStatus === "Cancelled"
+        ? "fa-ban"
+        : "fa-circle-check";
+  const buttonClass =
+    normalizedStatus === "Cancelled" ? "btn-danger" : "btn-primary";
+
+  const content = `
+    <form id="purchaseOrderStatusForm" method="POST" action="?page=purchase-orders">
+      <input type="hidden" name="action" value="update_entity">
+      <input type="hidden" name="entity" value="purchase_order_status">
+      <input type="hidden" name="id" value="${purchaseOrderId}">
+      <input type="hidden" name="status" value="${escapeHtml(normalizedStatus)}">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <div style="text-align: center; padding: 20px 0;">
+        <i class="fa-solid ${iconClass}" style="font-size: 48px; color: #4F46E5; margin-bottom: 16px;"></i>
+        <p style="margin: 0; font-size: 16px;">Set purchase order status to ${escapeHtml(normalizedStatus)}?</p>
+      </div>
+    </form>
+  `;
+
+  openModal("Update Purchase Order", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: normalizedStatus,
+      class: buttonClass,
+      onclick: 'document.getElementById("purchaseOrderStatusForm").requestSubmit()',
     },
   ]);
 }
@@ -4747,6 +5322,166 @@ function viewReturn(target) {
   openModal("Return Details", content, [
     { text: "Close", class: "btn-primary", onclick: "closeModal()" },
   ]);
+}
+
+function viewPurchaseOrder(target) {
+  if (!target) {
+    return;
+  }
+
+  const poId = Number.parseInt(target.getAttribute("data-po-id") || "0", 10);
+  const poNo = target.getAttribute("data-po-no") || "-";
+  const supplier = target.getAttribute("data-supplier") || "-";
+  const amount = target.getAttribute("data-amount") || "0";
+  const status = target.getAttribute("data-status") || "Pending";
+  const expectedDelivery = target.getAttribute("data-expected-delivery") || "-";
+  const notes = target.getAttribute("data-notes") || "-";
+  const rawItems = target.getAttribute("data-items") || "[]";
+  const date = target.getAttribute("data-date") || "-";
+
+  let items = [];
+  try {
+    const parsed = JSON.parse(rawItems);
+    if (Array.isArray(parsed)) {
+      items = parsed;
+    }
+  } catch (error) {
+    items = [];
+  }
+
+  const itemRows =
+    items.length > 0
+      ? items
+          .map((item, index) => {
+            const productName = String(item.product_name || "").trim();
+            const productId = Number.parseInt(
+              String(item.product_id || "0"),
+              10,
+            );
+            const quantity = Number.parseInt(String(item.quantity || "0"), 10);
+            const unitCost = Number.parseFloat(String(item.unit_cost || "0"));
+            const lineTotal = Number.parseFloat(
+              String(item.line_total || quantity * unitCost || 0),
+            );
+
+            const label =
+              productName !== ""
+                ? productName
+                : Number.isFinite(productId) && productId > 0
+                  ? `Product #${productId}`
+                  : `Item ${index + 1}`;
+
+            return `<tr>
+              <td style="padding:8px; border-bottom:1px solid #E5E7EB;">${escapeHtml(label)}</td>
+              <td style="padding:8px; border-bottom:1px solid #E5E7EB;">${Number.isFinite(quantity) ? quantity : 0}</td>
+              <td style="padding:8px; border-bottom:1px solid #E5E7EB;">Tsh ${escapeHtml(formatMoney(Number.isFinite(unitCost) ? unitCost : 0))}</td>
+              <td style="padding:8px; border-bottom:1px solid #E5E7EB;">Tsh ${escapeHtml(formatMoney(Number.isFinite(lineTotal) ? lineTotal : 0))}</td>
+            </tr>`;
+          })
+          .join("")
+      : '<tr><td colspan="4" style="padding:8px; text-align:center; color:#6B7280;">No PO items recorded.</td></tr>';
+
+  const content = `
+    <div style="display:grid; gap:10px;">
+      <div><strong>PO No:</strong> ${escapeHtml(poNo)}</div>
+      <div><strong>Supplier:</strong> ${escapeHtml(supplier)}</div>
+      <div><strong>Amount:</strong> Tsh ${escapeHtml(amount)}</div>
+      <div><strong>Status:</strong> ${escapeHtml(status)}</div>
+      <div><strong>Expected Delivery:</strong> ${escapeHtml(expectedDelivery)}</div>
+      <div><strong>Notes:</strong> ${escapeHtml(notes)}</div>
+      <div><strong>Date:</strong> ${escapeHtml(date)}</div>
+      <div style="margin-top:8px;">
+        <strong>Items</strong>
+        <div style="margin-top:6px; border:1px solid #E5E7EB; border-radius:8px; overflow:auto;">
+          <table style="width:100%; border-collapse:collapse; min-width:480px;">
+            <thead>
+              <tr style="background:#F9FAFB; text-align:left;">
+                <th style="padding:8px; border-bottom:1px solid #E5E7EB;">Product</th>
+                <th style="padding:8px; border-bottom:1px solid #E5E7EB;">Qty</th>
+                <th style="padding:8px; border-bottom:1px solid #E5E7EB;">Unit Cost</th>
+                <th style="padding:8px; border-bottom:1px solid #E5E7EB;">Line Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemRows}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+
+  openModal("Purchase Order Details", content, [
+    {
+      text: "Print PO",
+      class: "btn-secondary",
+      onclick: `printPurchaseOrder(${Number.isFinite(poId) ? poId : 0})`,
+    },
+    { text: "Close", class: "btn-primary", onclick: "closeModal()" },
+  ]);
+}
+
+function viewInvoice(target) {
+  if (!target) {
+    return;
+  }
+
+  const invoiceId = Number.parseInt(
+    target.getAttribute("data-invoice-id") || "0",
+    10,
+  );
+  const invoiceNo = target.getAttribute("data-invoice-no") || "-";
+  const customer = target.getAttribute("data-customer") || "-";
+  const amount = target.getAttribute("data-amount") || "0";
+  const status = target.getAttribute("data-status") || "Pending";
+  const date = target.getAttribute("data-date") || "-";
+
+  const content = `
+    <div style="display:grid; gap:10px;">
+      <div><strong>Invoice No:</strong> ${escapeHtml(invoiceNo)}</div>
+      <div><strong>Customer:</strong> ${escapeHtml(customer)}</div>
+      <div><strong>Amount:</strong> Tsh ${escapeHtml(amount)}</div>
+      <div><strong>Status:</strong> ${escapeHtml(status)}</div>
+      <div><strong>Date:</strong> ${escapeHtml(date)}</div>
+    </div>
+  `;
+
+  openModal("Invoice Details", content, [
+    {
+      text: "Print Invoice",
+      class: "btn-secondary",
+      handler: () => printInvoice(invoiceId),
+    },
+    { text: "Close", class: "btn-primary", onclick: "closeModal()" },
+  ]);
+}
+
+function printPurchaseOrder(id) {
+  const purchaseOrderId = Number.parseInt(id, 10);
+  if (!Number.isFinite(purchaseOrderId) || purchaseOrderId <= 0) {
+    showToast("error", "Invalid purchase order ID");
+    return;
+  }
+
+  window.open(
+    `export_purchase_order_pdf.php?po_id=${encodeURIComponent(purchaseOrderId)}`,
+    "_blank",
+    "noopener",
+  );
+}
+
+function printInvoice(id) {
+  const invoiceId = Number.parseInt(id, 10);
+  if (!Number.isFinite(invoiceId) || invoiceId <= 0) {
+    showToast("error", "Invalid invoice ID");
+    return;
+  }
+
+  window.open(
+    `export_invoice_pdf.php?invoice_id=${encodeURIComponent(invoiceId)}`,
+    "_blank",
+    "noopener",
+  );
 }
 
 function printCustomerStatement(id) {

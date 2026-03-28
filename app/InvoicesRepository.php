@@ -30,15 +30,38 @@ final class InvoicesRepository
 
     public function createInvoice(array $data): int
     {
+        $customerId = (int) ($data['customer_id'] ?? 0);
+        if ($customerId <= 0) {
+            throw new InvalidArgumentException('Please select a valid customer.');
+        }
+
+        $customerExistsStmt = $this->pdo->prepare('SELECT COUNT(*) AS total FROM customers WHERE id = :id');
+        $customerExistsStmt->execute([':id' => $customerId]);
+        $customerExists = (int) ($customerExistsStmt->fetch()['total'] ?? 0) > 0;
+        if (!$customerExists) {
+            throw new InvalidArgumentException('Selected customer does not exist. Please refresh and choose a valid customer.');
+        }
+
+        $amount = (float) ($data['amount'] ?? 0);
+        if ($amount <= 0) {
+            throw new InvalidArgumentException('Invoice amount must be greater than zero.');
+        }
+
+        $status = trim((string) ($data['status'] ?? 'Pending'));
+        $allowedStatuses = ['Pending', 'Paid', 'Cancelled'];
+        if (!in_array($status, $allowedStatuses, true)) {
+            $status = 'Pending';
+        }
+
         $invoiceNo = 'INV-' . date('Ymd') . '-' . random_int(1000, 9999);
         $stmt = $this->pdo->prepare(
             'INSERT INTO invoices (invoice_no, customer_id, amount, status, created_at) VALUES (:no, :customer_id, :amount, :status, NOW())'
         );
         $stmt->execute([
             ':no' => $invoiceNo,
-            ':customer_id' => (int)$data['customer_id'],
-            ':amount' => (float)$data['amount'],
-            ':status' => $data['status'] ?? 'Pending',
+            ':customer_id' => $customerId,
+            ':amount' => $amount,
+            ':status' => $status,
         ]);
         return (int) $this->pdo->lastInsertId();
     }
@@ -60,5 +83,26 @@ final class InvoicesRepository
     {
         $stmt = $this->pdo->prepare('DELETE FROM invoices WHERE id = :id');
         return $stmt->execute([':id' => $id]);
+    }
+
+    public function updateInvoiceStatus(int $id, string $status): bool
+    {
+        if ($id <= 0) {
+            return false;
+        }
+
+        $normalizedStatus = trim($status);
+        $allowedStatuses = ['Pending', 'Paid', 'Cancelled'];
+        if (!in_array($normalizedStatus, $allowedStatuses, true)) {
+            return false;
+        }
+
+        $stmt = $this->pdo->prepare('UPDATE invoices SET status = :status WHERE id = :id');
+        $stmt->execute([
+            ':status' => $normalizedStatus,
+            ':id' => $id,
+        ]);
+
+        return $stmt->rowCount() > 0;
     }
 }

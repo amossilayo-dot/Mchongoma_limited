@@ -112,15 +112,20 @@ $saleProductOptions = [
     ['id' => 3, 'name' => 'Soap Bar', 'unit_price' => 1200],
     ['id' => 4, 'name' => 'Milk 500ml', 'unit_price' => 1800],
 ];
+$poProductOptions = $products;
 $returnProductOptions = $products;
 $saleCustomerOptions = [
     ['id' => 1, 'name' => 'Walk-in Customer'],
     ['id' => 2, 'name' => 'Mchina'],
 ];
 $allSales = $recentSales;
+$invoicesRecords = [];
 $suppliers = [];
+$purchaseOrdersRecords = [];
+$purchaseOrderItemsByOrder = [];
 $receivingRecords = [];
 $receivingItemsByRecord = [];
+$receivingPurchaseOrderOptions = [];
 $returnsRecords = [];
 $employees = [];
 $appointments = [];
@@ -193,6 +198,7 @@ try {
     ensureCustomerCreditTables($pdo);
     ensureReceivingItemsTable($pdo);
     ensureReturnsTableSchema($pdo);
+    ensurePurchaseOrdersSchema($pdo);
     ensureUserAccountManagementSchema($pdo);
 
     if (isStoreConfigSaveRequest()) {
@@ -245,18 +251,37 @@ try {
         'stock_qty' => (int) ($item['stock_qty'] ?? 0),
         'unit_price' => (float) ($item['unit_price'] ?? 0),
     ], $inventoryRepo->getProducts(500));
+    $poProductOptions = $inventoryRepo->getProducts(max(500, $inventoryRepo->getTotalCount()));
     $returnProductOptions = $inventoryRepo->getProducts(max(500, $inventoryRepo->getTotalCount()));
     $saleCustomerOptions = array_map(static fn(array $item) => [
         'id' => (int) ($item['id'] ?? 0),
         'name' => (string) ($item['name'] ?? ''),
     ], $customerRepo->getCustomers(500));
     $allSales = $salesRepo->getSales(50);
+    if (canAccessPage('invoices', $userRole)) {
+        $invoicesRecords = (new InvoicesRepository($pdo))->getInvoices(300);
+    }
     $suppliers = (new SuppliersRepository($pdo))->getSuppliers(200);
+    if (canAccessPage('purchase-orders', $userRole)) {
+        $purchaseOrdersRepo = new PurchaseOrdersRepository($pdo);
+        $purchaseOrdersRecords = $purchaseOrdersRepo->getOrders(300);
+        $purchaseOrderIds = array_map(static fn(array $item): int => (int) ($item['id'] ?? 0), $purchaseOrdersRecords);
+        $purchaseOrderItemsByOrder = $purchaseOrdersRepo->getOrderItemsByOrderIds($purchaseOrderIds);
+    }
     if (canAccessPage('receiving', $userRole)) {
         $receivingRepo = new ReceivingRepository($pdo);
         $receivingRecords = $receivingRepo->getReceivings(300);
         $receivingIds = array_map(static fn(array $item): int => (int) ($item['id'] ?? 0), $receivingRecords);
         $receivingItemsByRecord = $receivingRepo->getReceivingItemsByReceivingIds($receivingIds);
+
+        $receivingPurchaseOrders = (new PurchaseOrdersRepository($pdo))->getOrders(500);
+        $receivingPurchaseOrderOptions = array_values(array_filter(
+            $receivingPurchaseOrders,
+            static function (array $row): bool {
+                $status = trim((string) ($row['status'] ?? 'Pending'));
+                return in_array($status, ['Pending', 'Approved'], true);
+            }
+        ));
     }
     if (canAccessPage('employees', $userRole)) {
         $employees = (new EmployeesRepository($pdo))->getEmployees(300);
@@ -673,6 +698,7 @@ function resolveEntityPageKey(string $entity): ?string
         'user_permission_override' => 'users',
         'expense' => 'expenses',
         'invoice' => 'invoices',
+        'invoice_status' => 'invoices',
         'delivery' => 'deliveries',
         'receiving' => 'receiving',
         'receiving_status' => 'receiving',
@@ -812,6 +838,48 @@ function ensureReceivingItemsTable(PDO $pdo): void
     if ((int) ($stockAppliedColumnCheck->fetch()['total'] ?? 0) === 0) {
         $pdo->exec('ALTER TABLE receiving ADD COLUMN stock_applied TINYINT(1) NOT NULL DEFAULT 0 AFTER amount');
     }
+
+    $purchaseOrderColumnCheck = $pdo->prepare(
+        'SELECT COUNT(*) AS total
+         FROM information_schema.columns
+         WHERE table_schema = DATABASE()
+           AND table_name = "receiving"
+           AND column_name = "purchase_order_id"'
+    );
+    $purchaseOrderColumnCheck->execute();
+    if ((int) ($purchaseOrderColumnCheck->fetch()['total'] ?? 0) === 0) {
+        $pdo->exec('ALTER TABLE receiving ADD COLUMN purchase_order_id INT NULL AFTER supplier_id');
+    }
+
+    $poIndexCheck = $pdo->prepare(
+        'SELECT COUNT(*) AS total
+         FROM information_schema.statistics
+         WHERE table_schema = DATABASE()
+           AND table_name = "receiving"
+           AND index_name = "idx_receiving_purchase_order"'
+    );
+    $poIndexCheck->execute();
+    if ((int) ($poIndexCheck->fetch()['total'] ?? 0) === 0) {
+        $pdo->exec('ALTER TABLE receiving ADD INDEX idx_receiving_purchase_order (purchase_order_id)');
+    }
+
+    $poForeignKeyCheck = $pdo->prepare(
+        'SELECT COUNT(*) AS total
+         FROM information_schema.key_column_usage
+         WHERE table_schema = DATABASE()
+           AND table_name = "receiving"
+           AND column_name = "purchase_order_id"
+           AND referenced_table_name = "purchase_orders"'
+    );
+    $poForeignKeyCheck->execute();
+    if ((int) ($poForeignKeyCheck->fetch()['total'] ?? 0) === 0) {
+        $pdo->exec(
+            'ALTER TABLE receiving
+             ADD CONSTRAINT fk_receiving_purchase_order
+             FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id)
+             ON DELETE SET NULL ON UPDATE CASCADE'
+        );
+    }
 }
 
 function ensureReturnsTableSchema(PDO $pdo): void
@@ -827,6 +895,53 @@ function ensureReturnsTableSchema(PDO $pdo): void
     if ((int) ($isExpiredColumnCheck->fetch()['total'] ?? 0) === 0) {
         $pdo->exec('ALTER TABLE returns ADD COLUMN is_expired TINYINT(1) NOT NULL DEFAULT 0 AFTER reason');
     }
+}
+
+function ensurePurchaseOrdersSchema(PDO $pdo): void
+{
+    $expectedDateColumnCheck = $pdo->prepare(
+        'SELECT COUNT(*) AS total
+         FROM information_schema.columns
+         WHERE table_schema = DATABASE()
+           AND table_name = "purchase_orders"
+           AND column_name = "expected_delivery_date"'
+    );
+    $expectedDateColumnCheck->execute();
+    if ((int) ($expectedDateColumnCheck->fetch()['total'] ?? 0) === 0) {
+        $pdo->exec('ALTER TABLE purchase_orders ADD COLUMN expected_delivery_date DATE NULL AFTER status');
+    }
+
+    $notesColumnCheck = $pdo->prepare(
+        'SELECT COUNT(*) AS total
+         FROM information_schema.columns
+         WHERE table_schema = DATABASE()
+           AND table_name = "purchase_orders"
+           AND column_name = "notes"'
+    );
+    $notesColumnCheck->execute();
+    if ((int) ($notesColumnCheck->fetch()['total'] ?? 0) === 0) {
+        $pdo->exec('ALTER TABLE purchase_orders ADD COLUMN notes TEXT NULL AFTER expected_delivery_date');
+    }
+
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS purchase_order_items (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            purchase_order_id INT NOT NULL,
+            product_id INT NOT NULL,
+            quantity INT NOT NULL DEFAULT 0,
+            unit_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+            line_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_po_item_po (purchase_order_id),
+            INDEX idx_po_item_product (product_id),
+            CONSTRAINT fk_po_item_po
+                FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id)
+                ON DELETE CASCADE ON UPDATE CASCADE,
+            CONSTRAINT fk_po_item_product
+                FOREIGN KEY (product_id) REFERENCES products(id)
+                ON DELETE RESTRICT ON UPDATE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
 }
 
 function ensureStoreSettingsTable(PDO $pdo): void
@@ -1564,6 +1679,7 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                 (new InvoicesRepository($pdo))->createInvoice([
                     'customer_id' => (int) ($_POST['customer_id'] ?? 0),
                     'amount' => (float) ($_POST['amount'] ?? 0),
+                    'status' => (string) ($_POST['status'] ?? 'Pending'),
                 ]);
                 return ['type' => 'success', 'message' => 'Invoice created successfully.'];
 
@@ -1579,6 +1695,7 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                 $receivingItems = is_array($itemsPayload) ? $itemsPayload : [];
                 (new ReceivingRepository($pdo))->createReceiving([
                     'supplier_id' => (int) ($_POST['supplier_id'] ?? 0),
+                    'purchase_order_id' => (int) ($_POST['purchase_order_id'] ?? 0),
                     'status' => (string) ($_POST['status'] ?? 'Pending'),
                     'amount' => (float) ($_POST['amount'] ?? 0),
                     'items' => $receivingItems,
@@ -1593,9 +1710,14 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                 return ['type' => 'success', 'message' => 'Quotation created successfully.'];
 
             case 'purchase_order':
+                $purchaseOrderItemsPayload = json_decode((string) ($_POST['items_json'] ?? '[]'), true);
+                $purchaseOrderItems = is_array($purchaseOrderItemsPayload) ? $purchaseOrderItemsPayload : [];
                 (new PurchaseOrdersRepository($pdo))->createOrder([
                     'supplier_id' => (int) ($_POST['supplier_id'] ?? 0),
                     'amount' => (float) ($_POST['amount'] ?? 0),
+                    'expected_delivery_date' => (string) ($_POST['expected_delivery_date'] ?? ''),
+                    'notes' => (string) ($_POST['notes'] ?? ''),
+                    'items' => $purchaseOrderItems,
                 ]);
                 return ['type' => 'success', 'message' => 'Purchase order created successfully.'];
 
@@ -1976,7 +2098,47 @@ function handleEntityUpdate(PDO $pdo, string $currentPage, string $userRole): ar
                     throw new RuntimeException('Could not update receiving status.');
                 }
 
-                return ['type' => 'success', 'message' => 'Receiving status updated successfully.'];
+                $message = 'Receiving status updated successfully.';
+                if (strtolower($requestedStatus) === 'completed') {
+                    $poLookupStmt = $pdo->prepare(
+                        'SELECT po.id, po.po_no, po.status
+                         FROM receiving r
+                         LEFT JOIN purchase_orders po ON po.id = r.purchase_order_id
+                         WHERE r.id = :id
+                         LIMIT 1'
+                    );
+                    $poLookupStmt->execute([':id' => $receivingId]);
+                    $poRow = $poLookupStmt->fetch() ?: null;
+
+                    $poId = (int) ($poRow['id'] ?? 0);
+                    $poNo = trim((string) ($poRow['po_no'] ?? ''));
+                    $poStatus = trim((string) ($poRow['status'] ?? ''));
+
+                    if ($poId > 0 && strtolower($poStatus) === 'received') {
+                        $poLabel = $poNo !== '' ? $poNo : ('PO #' . $poId);
+                        $message = 'Receiving completed and linked purchase order ' . $poLabel . ' was marked as Received.';
+                    }
+                }
+
+                return ['type' => 'success', 'message' => $message];
+
+            case 'invoice_status':
+                if ($currentPage !== 'invoices') {
+                    throw new RuntimeException('Invoice status updates are only allowed from the invoices page.');
+                }
+
+                $invoiceId = (int) ($_POST['id'] ?? 0);
+                $requestedStatus = trim((string) ($_POST['status'] ?? ''));
+                if ($invoiceId <= 0) {
+                    throw new RuntimeException('Invalid invoice ID.');
+                }
+
+                $updated = (new InvoicesRepository($pdo))->updateInvoiceStatus($invoiceId, $requestedStatus);
+                if (!$updated) {
+                    throw new RuntimeException('Could not update invoice status.');
+                }
+
+                return ['type' => 'success', 'message' => 'Invoice updated to ' . $requestedStatus . '.'];
 
             case 'return_status':
                 if ($currentPage !== 'returns') {
@@ -2007,6 +2169,24 @@ function handleEntityUpdate(PDO $pdo, string $currentPage, string $userRole): ar
                 }
 
                 return ['type' => 'success', 'message' => 'Return rejected. Stock was not changed.'];
+
+            case 'purchase_order_status':
+                if ($currentPage !== 'purchase-orders') {
+                    throw new RuntimeException('Purchase order status updates are only allowed from the purchase orders page.');
+                }
+
+                $purchaseOrderId = (int) ($_POST['id'] ?? 0);
+                $requestedStatus = trim((string) ($_POST['status'] ?? ''));
+                if ($purchaseOrderId <= 0) {
+                    throw new RuntimeException('Invalid purchase order ID.');
+                }
+
+                $updated = (new PurchaseOrdersRepository($pdo))->updateOrderStatus($purchaseOrderId, $requestedStatus);
+                if (!$updated) {
+                    throw new RuntimeException('Purchase order status can only follow Pending -> Approved -> Received, or be Cancelled before Received.');
+                }
+
+                return ['type' => 'success', 'message' => 'Purchase order updated to ' . $requestedStatus . '.'];
         }
 
         return [
@@ -3673,11 +3853,74 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                             </tr>
                         </thead>
                         <tbody>
-                            <tr>
-                                <td colspan="6" style="text-align:center; padding: 20px;">
-                                    <i class="fa-solid fa-inbox"></i> No invoices created yet
-                                </td>
-                            </tr>
+                            <?php if (count($invoicesRecords) === 0): ?>
+                                <tr>
+                                    <td colspan="6" style="text-align:center; padding: 20px;">
+                                        <i class="fa-solid fa-inbox"></i> No invoices created yet
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($invoicesRecords as $invoice): ?>
+                                    <?php
+                                        $invoiceStatus = trim((string) ($invoice['status'] ?? 'Pending'));
+                                        $invoiceStatusClass = strtolower($invoiceStatus) === 'paid'
+                                            ? 'success'
+                                            : (strtolower($invoiceStatus) === 'cancelled' ? 'danger' : 'warning');
+                                        $invoiceDateRaw = (string) ($invoice['created_at'] ?? '');
+                                        $invoiceDateTs = strtotime($invoiceDateRaw);
+                                        $invoiceDateLabel = $invoiceDateTs !== false
+                                            ? date('M d, Y H:i', $invoiceDateTs)
+                                            : $invoiceDateRaw;
+                                        $invoiceCustomerLabel = (string) (($invoice['customer_name'] ?? '') !== ''
+                                            ? $invoice['customer_name']
+                                            : ('Customer #' . (int) ($invoice['customer_id'] ?? 0)));
+                                    ?>
+                                    <tr>
+                                        <td><strong><?= e((string) ($invoice['invoice_no'] ?? '')) ?></strong></td>
+                                        <td><?= e($invoiceCustomerLabel) ?></td>
+                                        <td>Tsh <?= moneyFormat((float) ($invoice['amount'] ?? 0)) ?></td>
+                                        <td><span class="status-badge <?= e($invoiceStatusClass) ?>"><?= e($invoiceStatus) ?></span></td>
+                                        <td><?= e($invoiceDateLabel) ?></td>
+                                        <td>
+                                            <button
+                                                class="btn-icon"
+                                                data-action="viewInvoice"
+                                                data-invoice-id="<?= (int) ($invoice['id'] ?? 0) ?>"
+                                                data-invoice-no="<?= e((string) ($invoice['invoice_no'] ?? '')) ?>"
+                                                data-customer="<?= e($invoiceCustomerLabel) ?>"
+                                                data-amount="<?= moneyFormat((float) ($invoice['amount'] ?? 0)) ?>"
+                                                data-status="<?= e($invoiceStatus) ?>"
+                                                data-date="<?= e($invoiceDateLabel) ?>"
+                                                title="View Invoice"
+                                            >
+                                                <i class="fa-regular fa-eye"></i>
+                                            </button>
+                                            <?php if (strtolower($invoiceStatus) !== 'paid'): ?>
+                                                <button
+                                                    class="btn-icon"
+                                                    data-action="updateInvoiceStatus"
+                                                    data-value="<?= (int) ($invoice['id'] ?? 0) ?>"
+                                                    data-status="Paid"
+                                                    title="Mark as Paid"
+                                                >
+                                                    <i class="fa-solid fa-circle-check"></i>
+                                                </button>
+                                            <?php endif; ?>
+                                            <?php if (strtolower($invoiceStatus) !== 'cancelled'): ?>
+                                                <button
+                                                    class="btn-icon danger"
+                                                    data-action="updateInvoiceStatus"
+                                                    data-value="<?= (int) ($invoice['id'] ?? 0) ?>"
+                                                    data-status="Cancelled"
+                                                    title="Cancel Invoice"
+                                                >
+                                                    <i class="fa-solid fa-ban"></i>
+                                                </button>
+                                            <?php endif; ?>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
@@ -3728,6 +3971,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                             <tr>
                                 <th>Receiving No</th>
                                 <th>Supplier</th>
+                                <th>Linked PO</th>
                                 <th>Amount</th>
                                 <th>Status</th>
                                 <th>Date</th>
@@ -3737,7 +3981,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                         <tbody>
                             <?php if (count($receivingRecords) === 0): ?>
                                 <tr>
-                                    <td colspan="6" style="text-align:center; padding: 20px;">
+                                    <td colspan="7" style="text-align:center; padding: 20px;">
                                         <i class="fa-solid fa-inbox"></i> No receiving records yet
                                     </td>
                                 </tr>
@@ -3756,10 +4000,16 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                         $supplierLabel = (string) (($receiving['supplier_name'] ?? '') !== ''
                                             ? $receiving['supplier_name']
                                             : ('Supplier #' . (int) ($receiving['supplier_id'] ?? 0)));
+                                        $linkedPoId = (int) ($receiving['purchase_order_id'] ?? 0);
+                                        $linkedPoNo = trim((string) ($receiving['po_no'] ?? ''));
+                                        $linkedPoLabel = $linkedPoId > 0
+                                            ? ($linkedPoNo !== '' ? $linkedPoNo : ('PO #' . $linkedPoId))
+                                            : '-';
                                     ?>
                                     <tr>
                                         <td><strong><?= e((string) ($receiving['receiving_no'] ?? '')) ?></strong></td>
                                         <td><?= e($supplierLabel) ?></td>
+                                        <td><?= e($linkedPoLabel) ?></td>
                                         <td>Tsh <?= moneyFormat((float) ($receiving['amount'] ?? 0)) ?></td>
                                         <td><span class="status-badge <?= e($receivingStatusClass) ?>"><?= e($receivingStatus) ?></span></td>
                                         <td><?= e($receivingDateLabel) ?></td>
@@ -3831,18 +4081,133 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                             <tr>
                                 <th>PO No</th>
                                 <th>Supplier</th>
+                                <th>Items</th>
                                 <th>Amount</th>
+                                <th>Expected Delivery</th>
                                 <th>Status</th>
+                                <th>Notes</th>
                                 <th>Date</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <tr>
-                                <td colspan="6" style="text-align:center; padding: 20px;">
-                                    <i class="fa-solid fa-cart"></i> No purchase orders created yet
-                                </td>
-                            </tr>
+                            <?php if (count($purchaseOrdersRecords) === 0): ?>
+                                <tr>
+                                    <td colspan="9" style="text-align:center; padding: 20px;">
+                                        <i class="fa-solid fa-cart"></i> No purchase orders created yet
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($purchaseOrdersRecords as $purchaseOrder): ?>
+                                    <?php
+                                        $poStatus = trim((string) ($purchaseOrder['status'] ?? 'Pending'));
+                                        $poStatusClass = strtolower($poStatus) === 'received'
+                                            ? 'success'
+                                            : (strtolower($poStatus) === 'approved' ? 'warning' : (strtolower($poStatus) === 'cancelled' ? 'danger' : 'warning'));
+                                        $poDateRaw = (string) ($purchaseOrder['created_at'] ?? '');
+                                        $poDateTs = strtotime($poDateRaw);
+                                        $poDateLabel = $poDateTs !== false
+                                            ? date('M d, Y H:i', $poDateTs)
+                                            : $poDateRaw;
+                                        $poExpectedDeliveryRaw = trim((string) ($purchaseOrder['expected_delivery_date'] ?? ''));
+                                        $poExpectedDeliveryLabel = '-';
+                                        if ($poExpectedDeliveryRaw !== '') {
+                                            $poExpectedDeliveryTs = strtotime($poExpectedDeliveryRaw);
+                                            $poExpectedDeliveryLabel = $poExpectedDeliveryTs !== false
+                                                ? date('M d, Y', $poExpectedDeliveryTs)
+                                                : $poExpectedDeliveryRaw;
+                                        }
+                                        $poNotes = trim((string) ($purchaseOrder['notes'] ?? ''));
+                                        $poNotesShort = $poNotes !== ''
+                                            ? (strlen($poNotes) > 80 ? substr($poNotes, 0, 77) . '...' : $poNotes)
+                                            : '-';
+                                        $poSupplierLabel = (string) (($purchaseOrder['supplier_name'] ?? '') !== ''
+                                            ? $purchaseOrder['supplier_name']
+                                            : ('Supplier #' . (int) ($purchaseOrder['supplier_id'] ?? 0)));
+                                        $poId = (int) ($purchaseOrder['id'] ?? 0);
+                                        $poItems = $purchaseOrderItemsByOrder[$poId] ?? [];
+                                        $poItemsCount = count($poItems);
+                                        $poItemsLabel = $poItemsCount === 1 ? '1 item' : ($poItemsCount . ' items');
+                                        $poFirstItemLabel = $poItemsCount > 0
+                                            ? (string) ($poItems[0]['product_name'] ?? ('Product #' . (int) ($poItems[0]['product_id'] ?? 0)))
+                                            : '';
+                                        $poItemsSummary = $poItemsCount > 0
+                                            ? ($poItemsLabel . ' - ' . $poFirstItemLabel)
+                                            : '-';
+                                        $poItemsJson = json_encode($poItems, JSON_UNESCAPED_UNICODE);
+                                        if ($poItemsJson === false) {
+                                            $poItemsJson = '[]';
+                                        }
+                                    ?>
+                                    <tr>
+                                        <td><strong><?= e((string) ($purchaseOrder['po_no'] ?? '')) ?></strong></td>
+                                        <td><?= e($poSupplierLabel) ?></td>
+                                        <td title="<?= e($poItemsSummary) ?>"><?= e($poItemsSummary) ?></td>
+                                        <td>Tsh <?= moneyFormat((float) ($purchaseOrder['amount'] ?? 0)) ?></td>
+                                        <td><?= e($poExpectedDeliveryLabel) ?></td>
+                                        <td><span class="status-badge <?= e($poStatusClass) ?>"><?= e($poStatus) ?></span></td>
+                                        <td title="<?= e($poNotes !== '' ? $poNotes : '-') ?>"><?= e($poNotesShort) ?></td>
+                                        <td><?= e($poDateLabel) ?></td>
+                                        <td>
+                                            <button
+                                                class="btn-icon"
+                                                data-action="viewPO"
+                                                data-po-id="<?= (int) ($purchaseOrder['id'] ?? 0) ?>"
+                                                data-po-no="<?= e((string) ($purchaseOrder['po_no'] ?? '')) ?>"
+                                                data-supplier="<?= e($poSupplierLabel) ?>"
+                                                data-amount="<?= moneyFormat((float) ($purchaseOrder['amount'] ?? 0)) ?>"
+                                                data-status="<?= e($poStatus) ?>"
+                                                data-expected-delivery="<?= e($poExpectedDeliveryLabel) ?>"
+                                                data-notes="<?= e($poNotes !== '' ? $poNotes : '-') ?>"
+                                                data-items="<?= e($poItemsJson) ?>"
+                                                data-date="<?= e($poDateLabel) ?>"
+                                                title="View"
+                                            >
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                            <?php if (strtolower($poStatus) === 'pending'): ?>
+                                                <button
+                                                    class="btn-icon"
+                                                    data-action="updatePOStatus"
+                                                    data-value="<?= (int) ($purchaseOrder['id'] ?? 0) ?>"
+                                                    data-status="Approved"
+                                                    title="Approve PO"
+                                                >
+                                                    <i class="fa-solid fa-check"></i>
+                                                </button>
+                                                <button
+                                                    class="btn-icon danger"
+                                                    data-action="updatePOStatus"
+                                                    data-value="<?= (int) ($purchaseOrder['id'] ?? 0) ?>"
+                                                    data-status="Cancelled"
+                                                    title="Cancel PO"
+                                                >
+                                                    <i class="fa-solid fa-ban"></i>
+                                                </button>
+                                            <?php elseif (strtolower($poStatus) === 'approved'): ?>
+                                                <button
+                                                    class="btn-icon"
+                                                    data-action="updatePOStatus"
+                                                    data-value="<?= (int) ($purchaseOrder['id'] ?? 0) ?>"
+                                                    data-status="Received"
+                                                    title="Mark Received"
+                                                >
+                                                    <i class="fa-solid fa-box-open"></i>
+                                                </button>
+                                                <button
+                                                    class="btn-icon danger"
+                                                    data-action="updatePOStatus"
+                                                    data-value="<?= (int) ($purchaseOrder['id'] ?? 0) ?>"
+                                                    data-status="Cancelled"
+                                                    title="Cancel PO"
+                                                >
+                                                    <i class="fa-solid fa-ban"></i>
+                                                </button>
+                                            <?php endif; ?>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
@@ -4430,6 +4795,13 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
         'reorder_level' => (int) ($item['reorder_level'] ?? 5),
         'unit_price' => (float) ($item['unit_price'] ?? 0),
     ], $products),
+    'poProducts' => array_map(static fn(array $item) => [
+        'id' => (int) ($item['id'] ?? 0),
+        'name' => (string) ($item['name'] ?? ''),
+        'sku' => (string) ($item['sku'] ?? ''),
+        'stock_qty' => (int) ($item['stock_qty'] ?? 0),
+        'unit_price' => (float) ($item['unit_price'] ?? 0),
+    ], $poProductOptions),
     'returnProducts' => array_map(static fn(array $item) => [
         'id' => (int) ($item['id'] ?? 0),
         'name' => (string) ($item['name'] ?? ''),
@@ -4446,6 +4818,14 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
         'name' => (string) ($item['name'] ?? ''),
         'status' => (string) ($item['status'] ?? 'Active'),
     ], $suppliers),
+    'receivingPurchaseOrders' => array_map(static fn(array $item) => [
+        'id' => (int) ($item['id'] ?? 0),
+        'po_no' => (string) ($item['po_no'] ?? ''),
+        'supplier_id' => (int) ($item['supplier_id'] ?? 0),
+        'supplier_name' => (string) ($item['supplier_name'] ?? ''),
+        'status' => (string) ($item['status'] ?? 'Pending'),
+        'amount' => (float) ($item['amount'] ?? 0),
+    ], $receivingPurchaseOrderOptions),
     'receivingRecords' => array_map(static function (array $item) use ($receivingItemsByRecord): array {
         $receivingId = (int) ($item['id'] ?? 0);
         $rawItems = $receivingItemsByRecord[$receivingId] ?? [];
@@ -4470,6 +4850,8 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
             'id' => $receivingId,
             'receiving_no' => (string) ($item['receiving_no'] ?? ''),
             'supplier_id' => (int) ($item['supplier_id'] ?? 0),
+            'purchase_order_id' => (int) ($item['purchase_order_id'] ?? 0),
+            'purchase_order_no' => (string) ($item['po_no'] ?? ''),
             'supplier_name' => (string) ($item['supplier_name'] ?? ''),
             'status' => (string) ($item['status'] ?? 'Pending'),
             'amount' => (float) ($item['amount'] ?? 0),

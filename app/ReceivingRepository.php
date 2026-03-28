@@ -11,9 +11,10 @@ final class ReceivingRepository
     public function getReceivings(int $limit = 50, int $offset = 0): array
     {
         $stmt = $this->pdo->prepare(
-                        'SELECT r.id, r.receiving_no, r.supplier_id, s.name AS supplier_name, r.status, r.amount, r.stock_applied, r.created_at
+                                                'SELECT r.id, r.receiving_no, r.supplier_id, r.purchase_order_id, po.po_no, s.name AS supplier_name, r.status, r.amount, r.stock_applied, r.created_at
              FROM receiving r
              LEFT JOIN suppliers s ON s.id = r.supplier_id
+                         LEFT JOIN purchase_orders po ON po.id = r.purchase_order_id
                ORDER BY r.created_at DESC
              LIMIT :limit OFFSET :offset'
         );
@@ -89,6 +90,32 @@ final class ReceivingRepository
             throw new InvalidArgumentException('Selected supplier does not exist.');
         }
 
+        $purchaseOrderId = (int) ($data['purchase_order_id'] ?? 0);
+        if ($purchaseOrderId > 0) {
+            $purchaseOrderStmt = $this->pdo->prepare(
+                'SELECT supplier_id, status
+                 FROM purchase_orders
+                 WHERE id = :id
+                 LIMIT 1'
+            );
+            $purchaseOrderStmt->execute([':id' => $purchaseOrderId]);
+            $purchaseOrder = $purchaseOrderStmt->fetch();
+
+            if (!$purchaseOrder) {
+                throw new InvalidArgumentException('Selected purchase order does not exist.');
+            }
+
+            $poSupplierId = (int) ($purchaseOrder['supplier_id'] ?? 0);
+            if ($poSupplierId !== $supplierId) {
+                throw new InvalidArgumentException('Selected purchase order belongs to a different supplier.');
+            }
+
+            $poStatus = trim((string) ($purchaseOrder['status'] ?? 'Pending'));
+            if (in_array($poStatus, ['Received', 'Cancelled'], true)) {
+                throw new InvalidArgumentException('Selected purchase order is already closed.');
+            }
+        }
+
         $status = trim((string) ($data['status'] ?? 'Pending'));
         $allowedStatuses = ['Pending', 'Received', 'Completed'];
         if (!in_array($status, $allowedStatuses, true)) {
@@ -150,11 +177,12 @@ final class ReceivingRepository
         $this->pdo->beginTransaction();
         try {
             $receivingStmt = $this->pdo->prepare(
-                'INSERT INTO receiving (receiving_no, supplier_id, status, amount, stock_applied, created_at) VALUES (:no, :supplier_id, :status, :amount, :stock_applied, NOW())'
+                'INSERT INTO receiving (receiving_no, supplier_id, purchase_order_id, status, amount, stock_applied, created_at) VALUES (:no, :supplier_id, :purchase_order_id, :status, :amount, :stock_applied, NOW())'
             );
             $receivingStmt->execute([
                 ':no' => $receivingNo,
                 ':supplier_id' => $supplierId,
+                ':purchase_order_id' => $purchaseOrderId > 0 ? $purchaseOrderId : null,
                 ':status' => $status,
                 ':amount' => $amount,
                 ':stock_applied' => $shouldApplyStock ? 1 : 0,
@@ -188,6 +216,10 @@ final class ReceivingRepository
                 }
             }
 
+            if ($shouldApplyStock && $purchaseOrderId > 0) {
+                $this->syncLinkedPurchaseOrderStatus($purchaseOrderId);
+            }
+
             $this->pdo->commit();
             return $receivingId;
         } catch (Throwable $exception) {
@@ -213,7 +245,7 @@ final class ReceivingRepository
         $this->pdo->beginTransaction();
         try {
             $receivingStmt = $this->pdo->prepare(
-                'SELECT id, status, stock_applied
+                'SELECT id, status, stock_applied, purchase_order_id
                  FROM receiving
                  WHERE id = :id
                  FOR UPDATE'
@@ -278,6 +310,11 @@ final class ReceivingRepository
                 ':id' => $id,
             ]);
 
+            $purchaseOrderId = (int) ($receiving['purchase_order_id'] ?? 0);
+            if ($updated && $normalizedStatus === 'Completed' && $purchaseOrderId > 0) {
+                $this->syncLinkedPurchaseOrderStatus($purchaseOrderId);
+            }
+
             $this->pdo->commit();
             return $updated;
         } catch (Throwable $exception) {
@@ -286,5 +323,45 @@ final class ReceivingRepository
             }
             throw $exception;
         }
+    }
+
+    private function syncLinkedPurchaseOrderStatus(int $purchaseOrderId): void
+    {
+        if ($purchaseOrderId <= 0) {
+            return;
+        }
+
+        $poStmt = $this->pdo->prepare(
+            'SELECT status
+             FROM purchase_orders
+             WHERE id = :id
+             FOR UPDATE'
+        );
+        $poStmt->execute([':id' => $purchaseOrderId]);
+        $purchaseOrder = $poStmt->fetch();
+        if (!$purchaseOrder) {
+            return;
+        }
+
+        $currentStatus = trim((string) ($purchaseOrder['status'] ?? 'Pending'));
+        if ($currentStatus === 'Cancelled' || $currentStatus === 'Received') {
+            return;
+        }
+
+        if ($currentStatus === 'Pending') {
+            $approveStmt = $this->pdo->prepare(
+                'UPDATE purchase_orders
+                 SET status = "Approved"
+                 WHERE id = :id AND status = "Pending"'
+            );
+            $approveStmt->execute([':id' => $purchaseOrderId]);
+        }
+
+        $receiveStmt = $this->pdo->prepare(
+            'UPDATE purchase_orders
+             SET status = "Received"
+             WHERE id = :id AND status IN ("Approved", "Pending")'
+        );
+        $receiveStmt->execute([':id' => $purchaseOrderId]);
     }
 }

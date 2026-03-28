@@ -223,6 +223,8 @@ CREATE TABLE purchase_orders (
     supplier_id INT NOT NULL,
     amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
     status ENUM('Pending', 'Approved', 'Received', 'Cancelled') NOT NULL DEFAULT 'Pending',
+    expected_delivery_date DATE DEFAULT NULL,
+    notes TEXT DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT ON UPDATE CASCADE,
     INDEX idx_po_no (po_no),
@@ -230,17 +232,35 @@ CREATE TABLE purchase_orders (
     INDEX idx_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Table: PURCHASE_ORDER_ITEMS
+CREATE TABLE purchase_order_items (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    purchase_order_id INT NOT NULL,
+    product_id INT NOT NULL,
+    quantity INT NOT NULL DEFAULT 0,
+    unit_cost DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+    line_total DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    INDEX idx_po_item_po (purchase_order_id),
+    INDEX idx_po_item_product (product_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Table: RECEIVING
 CREATE TABLE receiving (
     id INT AUTO_INCREMENT PRIMARY KEY,
     receiving_no VARCHAR(50) NOT NULL UNIQUE,
     supplier_id INT NOT NULL,
+    purchase_order_id INT NULL,
     amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
     status ENUM('Pending', 'Received', 'Completed') NOT NULL DEFAULT 'Pending',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id) ON DELETE SET NULL ON UPDATE CASCADE,
     INDEX idx_receiving_no (receiving_no),
-    INDEX idx_supplier_id (supplier_id)
+    INDEX idx_supplier_id (supplier_id),
+    INDEX idx_receiving_purchase_order (purchase_order_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Table: RETURNS
