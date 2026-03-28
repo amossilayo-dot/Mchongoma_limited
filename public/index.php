@@ -112,6 +112,7 @@ $saleProductOptions = [
     ['id' => 3, 'name' => 'Soap Bar', 'unit_price' => 1200],
     ['id' => 4, 'name' => 'Milk 500ml', 'unit_price' => 1800],
 ];
+$returnProductOptions = $products;
 $saleCustomerOptions = [
     ['id' => 1, 'name' => 'Walk-in Customer'],
     ['id' => 2, 'name' => 'Mchina'],
@@ -120,6 +121,7 @@ $allSales = $recentSales;
 $suppliers = [];
 $receivingRecords = [];
 $receivingItemsByRecord = [];
+$returnsRecords = [];
 $employees = [];
 $appointments = [];
 $systemUsers = [];
@@ -190,6 +192,7 @@ try {
 
     ensureCustomerCreditTables($pdo);
     ensureReceivingItemsTable($pdo);
+    ensureReturnsTableSchema($pdo);
     ensureUserAccountManagementSchema($pdo);
 
     if (isStoreConfigSaveRequest()) {
@@ -242,6 +245,7 @@ try {
         'stock_qty' => (int) ($item['stock_qty'] ?? 0),
         'unit_price' => (float) ($item['unit_price'] ?? 0),
     ], $inventoryRepo->getProducts(500));
+    $returnProductOptions = $inventoryRepo->getProducts(max(500, $inventoryRepo->getTotalCount()));
     $saleCustomerOptions = array_map(static fn(array $item) => [
         'id' => (int) ($item['id'] ?? 0),
         'name' => (string) ($item['name'] ?? ''),
@@ -259,6 +263,9 @@ try {
     }
     if (canAccessPage('appointments', $userRole)) {
         $appointments = (new AppointmentsRepository($pdo))->getAppointments(300);
+    }
+    if (canAccessPage('returns', $userRole)) {
+        $returnsRecords = (new ReturnsRepository($pdo))->getReturns(300);
     }
     if (canAccessPage('users', $userRole) && hasUsersTable($pdo)) {
         $usersStmt = $pdo->query(
@@ -804,6 +811,21 @@ function ensureReceivingItemsTable(PDO $pdo): void
     $stockAppliedColumnCheck->execute();
     if ((int) ($stockAppliedColumnCheck->fetch()['total'] ?? 0) === 0) {
         $pdo->exec('ALTER TABLE receiving ADD COLUMN stock_applied TINYINT(1) NOT NULL DEFAULT 0 AFTER amount');
+    }
+}
+
+function ensureReturnsTableSchema(PDO $pdo): void
+{
+    $isExpiredColumnCheck = $pdo->prepare(
+        'SELECT COUNT(*) AS total
+         FROM information_schema.columns
+         WHERE table_schema = DATABASE()
+           AND table_name = "returns"
+           AND column_name = "is_expired"'
+    );
+    $isExpiredColumnCheck->execute();
+    if ((int) ($isExpiredColumnCheck->fetch()['total'] ?? 0) === 0) {
+        $pdo->exec('ALTER TABLE returns ADD COLUMN is_expired TINYINT(1) NOT NULL DEFAULT 0 AFTER reason');
     }
 }
 
@@ -1582,6 +1604,7 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                     'product_id' => (int) ($_POST['product_id'] ?? 0),
                     'quantity' => (int) ($_POST['quantity'] ?? 0),
                     'reason' => (string) ($_POST['reason'] ?? ''),
+                    'is_expired' => ($_POST['is_expired'] ?? ''),
                 ]);
                 return ['type' => 'success', 'message' => 'Return created successfully.'];
 
@@ -1954,6 +1977,36 @@ function handleEntityUpdate(PDO $pdo, string $currentPage, string $userRole): ar
                 }
 
                 return ['type' => 'success', 'message' => 'Receiving status updated successfully.'];
+
+            case 'return_status':
+                if ($currentPage !== 'returns') {
+                    throw new RuntimeException('Return status updates are only allowed from the returns page.');
+                }
+
+                $returnId = (int) ($_POST['id'] ?? 0);
+                $requestedStatus = trim((string) ($_POST['status'] ?? ''));
+                if ($returnId <= 0) {
+                    throw new RuntimeException('Invalid return ID.');
+                }
+
+                $result = (new ReturnsRepository($pdo))->updateReturnStatus($returnId, $requestedStatus);
+                if (!(bool) ($result['updated'] ?? false)) {
+                    throw new RuntimeException('Return status can only be updated once while Pending.');
+                }
+
+                if (strtolower($requestedStatus) === 'approved') {
+                    if ((bool) ($result['stock_applied'] ?? false)) {
+                        return ['type' => 'success', 'message' => 'Return approved and stock added to inventory.'];
+                    }
+
+                    if ((bool) ($result['skipped_expired'] ?? false)) {
+                        return ['type' => 'success', 'message' => 'Return approved. Stock was not added because item is expired.'];
+                    }
+
+                    return ['type' => 'success', 'message' => 'Return approved.'];
+                }
+
+                return ['type' => 'success', 'message' => 'Return rejected. Stock was not changed.'];
         }
 
         return [
@@ -3817,11 +3870,67 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                             </tr>
                         </thead>
                         <tbody>
-                            <tr>
-                                <td colspan="7" style="text-align:center; padding: 20px;">
-                                    <i class="fa-solid fa-inbox"></i> No returns recorded yet
-                                </td>
-                            </tr>
+                            <?php if (count($returnsRecords) === 0): ?>
+                                <tr>
+                                    <td colspan="7" style="text-align:center; padding: 20px;">
+                                        <i class="fa-solid fa-inbox"></i> No returns recorded yet
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($returnsRecords as $returnRow): ?>
+                                    <?php
+                                        $returnStatus = trim((string) ($returnRow['status'] ?? 'Pending'));
+                                        $returnStatusClass = strtolower($returnStatus) === 'approved'
+                                            ? 'success'
+                                            : (strtolower($returnStatus) === 'rejected' ? 'danger' : 'warning');
+                                        $returnDateRaw = (string) ($returnRow['created_at'] ?? '');
+                                        $returnDate = $returnDateRaw;
+                                        if ($returnDateRaw !== '') {
+                                            try {
+                                                $returnDate = (new DateTimeImmutable($returnDateRaw))->format('d M Y, H:i');
+                                            } catch (Throwable $dateException) {
+                                                $returnDate = $returnDateRaw;
+                                            }
+                                        }
+                                    ?>
+                                    <tr>
+                                        <td><?= e((string) ($returnRow['return_no'] ?? '')) ?></td>
+                                        <td><?= e((string) ($returnRow['product_name'] ?? ('Product #' . (int) ($returnRow['product_id'] ?? 0)))) ?></td>
+                                        <td><?= (int) ($returnRow['quantity'] ?? 0) ?></td>
+                                        <td><?= e((string) ($returnRow['reason'] ?? '-')) ?></td>
+                                        <td><span class="status-pill <?= e($returnStatusClass) ?>"><?= e($returnStatus) ?></span></td>
+                                        <td><?= e($returnDate) ?></td>
+                                        <td>
+                                            <button
+                                                class="btn-icon"
+                                                data-action="viewReturn"
+                                                data-return-no="<?= e((string) ($returnRow['return_no'] ?? '')) ?>"
+                                                data-product="<?= e((string) ($returnRow['product_name'] ?? ('Product #' . (int) ($returnRow['product_id'] ?? 0)))) ?>"
+                                                data-quantity="<?= (int) ($returnRow['quantity'] ?? 0) ?>"
+                                                data-reason="<?= e((string) ($returnRow['reason'] ?? '-')) ?>"
+                                                data-is-expired="<?= ((int) ($returnRow['is_expired'] ?? 0)) === 1 ? '1' : '0' ?>"
+                                                data-status="<?= e($returnStatus) ?>"
+                                                data-date="<?= e($returnDate) ?>"
+                                                title="View Return"
+                                            >
+                                                <i class="fa-regular fa-eye"></i>
+                                            </button>
+                                            <?php if (strtolower($returnStatus) === 'pending'): ?>
+                                                <button class="btn-icon" data-action="updateReturnStatus" data-value="<?= (int) ($returnRow['id'] ?? 0) ?>" data-status="Approved" data-reason="<?= e((string) ($returnRow['reason'] ?? '')) ?>" data-is-expired="<?= ((int) ($returnRow['is_expired'] ?? 0)) === 1 ? '1' : '0' ?>" title="Approve Return">
+                                                    <i class="fa-solid fa-check"></i>
+                                                </button>
+                                                <button class="btn-icon danger" data-action="updateReturnStatus" data-value="<?= (int) ($returnRow['id'] ?? 0) ?>" data-status="Rejected" data-reason="<?= e((string) ($returnRow['reason'] ?? '')) ?>" data-is-expired="<?= ((int) ($returnRow['is_expired'] ?? 0)) === 1 ? '1' : '0' ?>" title="Reject Return">
+                                                    <i class="fa-solid fa-xmark"></i>
+                                                </button>
+                                            <?php else: ?>
+                                                <button class="btn-icon" title="Processed" disabled aria-disabled="true">
+                                                    <i class="fa-regular fa-circle-check"></i>
+                                                </button>
+                                            <?php endif; ?>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
@@ -4321,6 +4430,12 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
         'reorder_level' => (int) ($item['reorder_level'] ?? 5),
         'unit_price' => (float) ($item['unit_price'] ?? 0),
     ], $products),
+    'returnProducts' => array_map(static fn(array $item) => [
+        'id' => (int) ($item['id'] ?? 0),
+        'name' => (string) ($item['name'] ?? ''),
+        'sku' => (string) ($item['sku'] ?? ''),
+        'stock_qty' => (int) ($item['stock_qty'] ?? 0),
+    ], $returnProductOptions),
     'customers' => array_map(static fn(array $item) => [
         'id' => (int) ($item['id'] ?? 0),
         'name' => (string) ($item['name'] ?? ''),

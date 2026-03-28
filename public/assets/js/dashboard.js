@@ -943,9 +943,22 @@ function initActionBindings() {
       return;
     }
 
+    if (action === "viewReturn") {
+      viewReturn(target);
+      return;
+    }
+
     if (action === "updateReceivingStatus") {
       const status = target.getAttribute("data-status") || "";
       updateReceivingStatus(parseInt(value, 10), status);
+      return;
+    }
+
+    if (action === "updateReturnStatus") {
+      const status = target.getAttribute("data-status") || "";
+      const reason = target.getAttribute("data-reason") || "";
+      const isExpired = target.getAttribute("data-is-expired") || "0";
+      updateReturnStatus(parseInt(value, 10), status, reason, isExpired);
       return;
     }
 
@@ -1692,6 +1705,7 @@ function openEntityModal(config) {
   const fieldsMarkup = config.fields
     .map((field) => {
       if (field.type === "select") {
+        const selectId = `${formId}_${field.name}`;
         const optionsMarkup = (field.options || [])
           .map((option) => {
             const optionValue = escapeHtml(option.value || "");
@@ -1700,10 +1714,15 @@ function openEntityModal(config) {
           })
           .join("");
 
+        const searchMarkup = field.searchable
+          ? `<input type="search" data-select-search-target="${escapeHtml(selectId)}" placeholder="${escapeHtml(field.searchPlaceholder || "Search...")}" autocomplete="off">`
+          : "";
+
         return `
                 <div class="form-group">
                     <label>${field.label}</label>
-                    <select name="${field.name}" ${field.required ? "required" : ""}>
+                    ${searchMarkup}
+                    <select id="${escapeHtml(selectId)}" name="${field.name}" ${field.required ? "required" : ""}>
                         ${optionsMarkup}
                     </select>
                 </div>
@@ -1719,10 +1738,23 @@ function openEntityModal(config) {
             `;
       }
 
+      if (field.type === "checkbox") {
+        const checkboxValue =
+          field.value === undefined ? "1" : String(field.value);
+        return `
+            <div class="form-group">
+              <label style="display:flex; gap:10px; align-items:center; font-weight:600; cursor:pointer;">
+                <input type="checkbox" name="${field.name}" value="${escapeHtml(checkboxValue)}" ${field.checked ? "checked" : ""}>
+                <span>${field.checkboxLabel || field.label}</span>
+              </label>
+            </div>
+          `;
+      }
+
       return `
             <div class="form-group">
                 <label>${field.label}</label>
-                <input type="${field.type || "text"}" name="${field.name}" placeholder="${field.placeholder || ""}" ${field.required ? "required" : ""}>
+            <input type="${field.type || "text"}" name="${field.name}" placeholder="${field.placeholder || ""}" ${field.required ? "required" : ""} ${field.min !== undefined ? `min="${field.min}"` : ""} ${field.max !== undefined ? `max="${field.max}"` : ""} ${field.step !== undefined ? `step="${field.step}"` : ""}>
             </div>
         `;
     })
@@ -1745,6 +1777,142 @@ function openEntityModal(config) {
       onclick: `document.getElementById("${formId}").requestSubmit()`,
     },
   ]);
+
+  initSearchableSelects(formId);
+}
+
+function initSearchableSelects(formId) {
+  const form = document.getElementById(formId);
+  if (!form) {
+    return;
+  }
+
+  const searchInputs = form.querySelectorAll("[data-select-search-target]");
+  searchInputs.forEach((searchInput) => {
+    const targetId =
+      searchInput.getAttribute("data-select-search-target") || "";
+    if (targetId === "") {
+      return;
+    }
+
+    const select = document.getElementById(targetId);
+    if (!select || !form.contains(select)) {
+      return;
+    }
+
+    const sourceOptions = Array.from(select.options).map((option) => ({
+      value: option.value,
+      label: option.textContent || "",
+    }));
+
+    const getCurrentOptions = () =>
+      Array.from(select.options).filter((option) => option.value !== "");
+
+    const highlightMatchLabel = (label, term) => {
+      const normalizedTerm = String(term || "").trim();
+      if (normalizedTerm === "") {
+        return label;
+      }
+
+      const labelText = String(label || "");
+      const lowerLabel = labelText.toLowerCase();
+      const lowerTerm = normalizedTerm.toLowerCase();
+      const index = lowerLabel.indexOf(lowerTerm);
+      if (index === -1) {
+        return labelText;
+      }
+
+      const end = index + normalizedTerm.length;
+      return `${labelText.slice(0, index)}[${labelText.slice(index, end)}]${labelText.slice(end)}`;
+    };
+
+    const renderOptions = (term) => {
+      const rawSearchTerm = String(term || "").trim();
+      const searchTerm = rawSearchTerm.trim().toLowerCase();
+      const previousValue = select.value;
+      const filteredOptions = sourceOptions.filter((option) => {
+        if (searchTerm === "") {
+          return true;
+        }
+
+        return option.label.toLowerCase().includes(searchTerm);
+      });
+
+      select.innerHTML = "";
+
+      if (filteredOptions.length === 0) {
+        const noResultOption = document.createElement("option");
+        noResultOption.value = "";
+        noResultOption.textContent = "No matching products";
+        select.appendChild(noResultOption);
+        select.value = "";
+        return;
+      }
+
+      filteredOptions.forEach((option) => {
+        const optionEl = document.createElement("option");
+        optionEl.value = option.value;
+        optionEl.textContent = highlightMatchLabel(option.label, rawSearchTerm);
+        select.appendChild(optionEl);
+      });
+
+      const hasPreviousValue = filteredOptions.some(
+        (option) => option.value === previousValue,
+      );
+      if (hasPreviousValue) {
+        select.value = previousValue;
+      } else {
+        select.selectedIndex = 0;
+      }
+    };
+
+    searchInput.addEventListener("input", () =>
+      renderOptions(searchInput.value),
+    );
+
+    searchInput.addEventListener("keydown", (event) => {
+      const options = getCurrentOptions();
+
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        if (options.length === 0) {
+          return;
+        }
+
+        event.preventDefault();
+
+        const step = event.key === "ArrowDown" ? 1 : -1;
+        const selectedIndex = select.selectedIndex;
+        const nextIndex =
+          selectedIndex < 0
+            ? 0
+            : Math.min(Math.max(selectedIndex + step, 0), options.length - 1);
+
+        select.selectedIndex = nextIndex;
+        return;
+      }
+
+      if (event.key === "Enter") {
+        if (options.length > 0) {
+          event.preventDefault();
+          select.focus();
+        }
+        return;
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (searchInput.value !== "") {
+          searchInput.value = "";
+          renderOptions("");
+        } else {
+          searchInput.blur();
+        }
+      }
+    });
+
+    // Keep current option list and selected value in sync at startup.
+    renderOptions(searchInput.value);
+  });
 }
 
 function openAddSupplierModal() {
@@ -2560,6 +2728,37 @@ function openAddPOModal() {
 }
 
 function openAddReturnModal() {
+  const products = Array.isArray(APP_CONFIG.returnProducts)
+    ? APP_CONFIG.returnProducts
+    : Array.isArray(APP_CONFIG.inventoryProducts)
+      ? APP_CONFIG.inventoryProducts
+      : [];
+
+  if (products.length === 0) {
+    showToast(
+      "Please add at least one product in Inventory before recording a return.",
+      "warning",
+    );
+    return;
+  }
+
+  const productOptions = products
+    .map((product) => {
+      const id = String(product.id ?? "");
+      const name = String(product.name ?? "Product");
+      const sku = String(product.sku ?? "");
+      const stock = Number(product.stock_qty ?? 0).toLocaleString();
+      return {
+        value: id,
+        label: sku
+          ? `${name} (${sku}) - Stock: ${stock}`
+          : `${name} - Stock: ${stock}`,
+      };
+    })
+    .sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: "base" }),
+    );
+
   openEntityModal({
     key: "return",
     page: "returns",
@@ -2570,18 +2769,29 @@ function openAddReturnModal() {
     successMessage: "Return recorded successfully!",
     fields: [
       {
-        label: "Product ID",
+        label: "Product",
         name: "product_id",
-        type: "number",
+        type: "select",
         required: true,
-        placeholder: "Enter product ID",
+        searchable: true,
+        searchPlaceholder: "Search product by name, SKU, or stock...",
+        options: productOptions,
       },
       {
         label: "Quantity",
         name: "quantity",
         type: "number",
         required: true,
+        min: 1,
+        step: 1,
         placeholder: "Enter quantity",
+      },
+      {
+        label: "Expired Return",
+        name: "is_expired",
+        type: "checkbox",
+        value: "1",
+        checkboxLabel: "Expired item (do not add back to stock)",
       },
       {
         label: "Reason",
@@ -4414,6 +4624,128 @@ function updateAppointmentStatus(id, status) {
       onclick:
         'document.getElementById("appointmentStatusForm").requestSubmit()',
     },
+  ]);
+}
+
+function updateReturnStatus(id, status, reasonText = "", isExpiredFlag = "0") {
+  const returnId = Number.parseInt(id, 10);
+  const normalizedStatus = String(status || "").trim();
+  if (!Number.isFinite(returnId) || returnId <= 0) {
+    showToast("error", "Invalid return ID");
+    return;
+  }
+
+  if (!["Approved", "Rejected"].includes(normalizedStatus)) {
+    showToast("error", "Invalid return status");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const normalizedReason = String(reasonText || "").toLowerCase();
+  const expiredKeywords = [
+    "expired",
+    "expire",
+    "expiry",
+    "imeisha",
+    "imekwisha",
+    "bad",
+  ];
+  const isExpiredByFlag = ["1", "true", "yes", "on"].includes(
+    String(isExpiredFlag || "0").toLowerCase(),
+  );
+  const isExpiredReason =
+    isExpiredByFlag ||
+    expiredKeywords.some((keyword) => normalizedReason.includes(keyword));
+
+  let note =
+    '<p style="margin: 8px 0 0 0; font-size: 13px; color: #6B7280;">Stock will not be changed.</p>';
+  if (normalizedStatus === "Approved") {
+    note = isExpiredReason
+      ? '<p style="margin: 8px 0 0 0; font-size: 13px; color: #B45309;">Reason indicates expired item, so stock will NOT be added.</p>'
+      : '<p style="margin: 8px 0 0 0; font-size: 13px; color: #166534;">Stock will be added to inventory after approval.</p>';
+  }
+
+  const iconClass =
+    normalizedStatus === "Approved" ? "fa-circle-check" : "fa-ban";
+  const buttonClass =
+    normalizedStatus === "Approved" ? "btn-primary" : "btn-danger";
+
+  const content = `
+    <form id="returnStatusForm" method="POST" action="?page=returns">
+      <input type="hidden" name="action" value="update_entity">
+      <input type="hidden" name="entity" value="return_status">
+      <input type="hidden" name="id" value="${returnId}">
+      <input type="hidden" name="status" value="${escapeHtml(normalizedStatus)}">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <div style="text-align: center; padding: 20px 0;">
+        <i class="fa-solid ${iconClass}" style="font-size: 48px; color: #4F46E5; margin-bottom: 16px;"></i>
+        <p style="margin: 0; font-size: 16px;">Set return as ${escapeHtml(normalizedStatus)}?</p>
+        ${note}
+      </div>
+    </form>
+  `;
+
+  openModal("Update Return", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: normalizedStatus,
+      class: buttonClass,
+      onclick: 'document.getElementById("returnStatusForm").requestSubmit()',
+    },
+  ]);
+}
+
+function viewReturn(target) {
+  if (!target) {
+    return;
+  }
+
+  const returnNo = target.getAttribute("data-return-no") || "-";
+  const product = target.getAttribute("data-product") || "-";
+  const quantity = target.getAttribute("data-quantity") || "0";
+  const reason = target.getAttribute("data-reason") || "-";
+  const isExpiredFlag = target.getAttribute("data-is-expired") || "0";
+  const status = target.getAttribute("data-status") || "Pending";
+  const date = target.getAttribute("data-date") || "-";
+
+  const normalizedStatus = String(status).toLowerCase();
+  const normalizedReason = String(reason).toLowerCase();
+  const isExpiredByFlag = ["1", "true", "yes", "on"].includes(
+    String(isExpiredFlag || "0").toLowerCase(),
+  );
+  const isExpiredReason =
+    isExpiredByFlag ||
+    ["expired", "expire", "expiry", "imeisha", "imekwisha", "bad"].some(
+      (keyword) => normalizedReason.includes(keyword),
+    );
+
+  let stockImpact = "Stock will not change.";
+  if (normalizedStatus === "approved") {
+    stockImpact = isExpiredReason
+      ? "Stock was not added because item is expired."
+      : "Stock was added to inventory.";
+  } else if (normalizedStatus === "pending") {
+    stockImpact = isExpiredReason
+      ? "If approved, stock will still not be added because reason indicates expired item."
+      : "If approved, stock will be added to inventory.";
+  }
+
+  const content = `
+    <div style="display:grid; gap:10px;">
+      <div><strong>Return No:</strong> ${escapeHtml(returnNo)}</div>
+      <div><strong>Product:</strong> ${escapeHtml(product)}</div>
+      <div><strong>Quantity:</strong> ${escapeHtml(quantity)}</div>
+      <div><strong>Reason:</strong> ${escapeHtml(reason)}</div>
+      <div><strong>Status:</strong> ${escapeHtml(status)}</div>
+      <div><strong>Date:</strong> ${escapeHtml(date)}</div>
+      <div style="margin-top:6px; padding:10px 12px; border-radius:8px; background:#F9FAFB; color:#374151; font-size:13px;">
+        <strong>Stock Impact:</strong> ${escapeHtml(stockImpact)}
+      </div>
+    </div>
+  `;
+
+  openModal("Return Details", content, [
+    { text: "Close", class: "btn-primary", onclick: "closeModal()" },
   ]);
 }
 

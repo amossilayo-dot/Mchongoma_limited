@@ -250,6 +250,7 @@ CREATE TABLE returns (
     product_id INT NOT NULL,
     quantity INT NOT NULL DEFAULT 0,
     reason TEXT DEFAULT NULL,
+    is_expired TINYINT(1) NOT NULL DEFAULT 0,
     status ENUM('Pending', 'Approved', 'Rejected') NOT NULL DEFAULT 'Pending',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT ON UPDATE CASCADE,
