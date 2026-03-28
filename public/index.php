@@ -120,6 +120,7 @@ $saleCustomerOptions = [
 ];
 $allSales = $recentSales;
 $invoicesRecords = [];
+$quotationsRecords = [];
 $suppliers = [];
 $purchaseOrdersRecords = [];
 $purchaseOrderItemsByOrder = [];
@@ -199,6 +200,7 @@ try {
     ensureReceivingItemsTable($pdo);
     ensureReturnsTableSchema($pdo);
     ensurePurchaseOrdersSchema($pdo);
+    ensureQuotationsSchema($pdo);
     ensureUserAccountManagementSchema($pdo);
 
     if (isStoreConfigSaveRequest()) {
@@ -260,6 +262,12 @@ try {
     $allSales = $salesRepo->getSales(50);
     if (canAccessPage('invoices', $userRole)) {
         $invoicesRecords = (new InvoicesRepository($pdo))->getInvoices(300);
+    }
+    if (canAccessPage('deliveries', $userRole)) {
+        $deliveriesRecords = (new DeliveriesRepository($pdo))->getDeliveries(300);
+    }
+    if (canAccessPage('quotations', $userRole)) {
+        $quotationsRecords = (new QuotationsRepository($pdo))->getQuotations(300);
     }
     $suppliers = (new SuppliersRepository($pdo))->getSuppliers(200);
     if (canAccessPage('purchase-orders', $userRole)) {
@@ -700,11 +708,16 @@ function resolveEntityPageKey(string $entity): ?string
         'invoice' => 'invoices',
         'invoice_status' => 'invoices',
         'delivery' => 'deliveries',
+        'delivery_status' => 'deliveries',
         'receiving' => 'receiving',
         'receiving_status' => 'receiving',
         'quotation' => 'quotations',
+        'quotation_status' => 'quotations',
+        'quotation_delete' => 'quotations',
         'purchase_order' => 'purchase-orders',
+        'purchase_order_status' => 'purchase-orders',
         'return' => 'returns',
+        'return_status' => 'returns',
         'appointment' => 'appointments',
         'appointment_delete' => 'appointments',
         'appointment_status' => 'appointments',
@@ -942,6 +955,67 @@ function ensurePurchaseOrdersSchema(PDO $pdo): void
                 ON DELETE RESTRICT ON UPDATE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
     );
+}
+
+function ensureQuotationsSchema(PDO $pdo): void
+{
+    $tableCheckStmt = $pdo->prepare(
+        'SELECT COUNT(*) AS total
+         FROM information_schema.tables
+         WHERE table_schema = DATABASE()
+           AND table_name = "quotations"'
+    );
+    $tableCheckStmt->execute();
+    if ((int) ($tableCheckStmt->fetch()['total'] ?? 0) === 0) {
+        return;
+    }
+
+    $statusColumnStmt = $pdo->prepare(
+        'SELECT column_type
+         FROM information_schema.columns
+         WHERE table_schema = DATABASE()
+           AND table_name = "quotations"
+           AND column_name = "status"
+         LIMIT 1'
+    );
+    $statusColumnStmt->execute();
+    $statusColumn = $statusColumnStmt->fetch();
+    if (!$statusColumn) {
+        return;
+    }
+
+    $columnType = strtolower((string) ($statusColumn['column_type'] ?? ''));
+    $isLegacyEnum = str_contains($columnType, 'draft')
+        || str_contains($columnType, 'sent')
+        || str_contains($columnType, 'accepted');
+
+    if ($isLegacyEnum) {
+        // Expand enum first so both legacy and new values are valid during migration.
+        $pdo->exec(
+            'ALTER TABLE quotations
+             MODIFY status ENUM("Draft","Sent","Accepted","Rejected","Pending","Approved","Expired")
+             NOT NULL DEFAULT "Pending"'
+        );
+
+        $pdo->exec(
+            'UPDATE quotations
+             SET status = CASE
+                WHEN status IN ("Draft", "Sent", "") THEN "Pending"
+                WHEN status = "Accepted" THEN "Approved"
+                WHEN status = "Rejected" THEN "Rejected"
+                ELSE status
+             END'
+        );
+
+        $pdo->exec(
+            'ALTER TABLE quotations
+             MODIFY status ENUM("Pending","Approved","Rejected","Expired")
+             NOT NULL DEFAULT "Pending"'
+        );
+    }
+
+    // Normalize blanks introduced by old invalid enum coercions.
+    $pdo->exec('UPDATE quotations SET status = "Pending" WHERE status = "" OR status IS NULL');
 }
 
 function ensureStoreSettingsTable(PDO $pdo): void
@@ -2139,6 +2213,95 @@ function handleEntityUpdate(PDO $pdo, string $currentPage, string $userRole): ar
                 }
 
                 return ['type' => 'success', 'message' => 'Invoice updated to ' . $requestedStatus . '.'];
+
+            case 'delivery_status':
+                if ($currentPage !== 'deliveries') {
+                    throw new RuntimeException('Delivery status updates are only allowed from the deliveries page.');
+                }
+
+                $deliveryId = (int) ($_POST['id'] ?? 0);
+                $requestedStatus = trim((string) ($_POST['status'] ?? ''));
+                if ($deliveryId <= 0) {
+                    throw new RuntimeException('Invalid delivery ID.');
+                }
+
+                $updated = (new DeliveriesRepository($pdo))->updateDeliveryStatus($deliveryId, $requestedStatus);
+                if (!$updated) {
+                    throw new RuntimeException('Delivery status can only follow Pending -> In Transit/Cancelled, or In Transit -> Delivered/Cancelled.');
+                }
+
+                return ['type' => 'success', 'message' => 'Delivery updated to ' . $requestedStatus . '.'];
+
+            case 'quotation':
+                if ($currentPage !== 'quotations') {
+                    throw new RuntimeException('Quotation updates are only allowed from the quotations page.');
+                }
+
+                $normalizedRole = strtolower(trim($userRole));
+                if (!in_array($normalizedRole, ['admin', 'manager'], true)) {
+                    throw new RuntimeException('Only Admin or Manager can edit quotations.');
+                }
+
+                $quotationId = (int) ($_POST['id'] ?? 0);
+                if ($quotationId <= 0) {
+                    throw new RuntimeException('Invalid quotation ID.');
+                }
+
+                $updated = (new QuotationsRepository($pdo))->updateQuotation($quotationId, [
+                    'customer_id' => (int) ($_POST['customer_id'] ?? 0),
+                    'amount' => (float) ($_POST['amount'] ?? 0),
+                ]);
+
+                if (!$updated) {
+                    throw new RuntimeException('No quotation changes were applied.');
+                }
+
+                return ['type' => 'success', 'message' => 'Quotation updated successfully.'];
+
+            case 'quotation_status':
+                if ($currentPage !== 'quotations') {
+                    throw new RuntimeException('Quotation status updates are only allowed from the quotations page.');
+                }
+
+                $normalizedRole = strtolower(trim($userRole));
+                if (!in_array($normalizedRole, ['admin', 'manager'], true)) {
+                    throw new RuntimeException('Only Admin or Manager can update quotation status.');
+                }
+
+                $quotationId = (int) ($_POST['id'] ?? 0);
+                $requestedStatus = trim((string) ($_POST['status'] ?? ''));
+                if ($quotationId <= 0) {
+                    throw new RuntimeException('Invalid quotation ID.');
+                }
+
+                $updated = (new QuotationsRepository($pdo))->updateQuotationStatus($quotationId, $requestedStatus);
+                if (!$updated) {
+                    throw new RuntimeException('Quotation status can only follow Pending -> Approved/Rejected/Expired, or Approved -> Expired.');
+                }
+
+                return ['type' => 'success', 'message' => 'Quotation updated to ' . $requestedStatus . '.'];
+
+            case 'quotation_delete':
+                if ($currentPage !== 'quotations') {
+                    throw new RuntimeException('Quotation deletions are only allowed from the quotations page.');
+                }
+
+                $normalizedRole = strtolower(trim($userRole));
+                if (!in_array($normalizedRole, ['admin', 'manager'], true)) {
+                    throw new RuntimeException('Only Admin or Manager can delete quotations.');
+                }
+
+                $quotationId = (int) ($_POST['id'] ?? 0);
+                if ($quotationId <= 0) {
+                    throw new RuntimeException('Invalid quotation ID.');
+                }
+
+                $deleted = (new QuotationsRepository($pdo))->deleteQuotation($quotationId);
+                if (!$deleted) {
+                    throw new RuntimeException('Could not delete quotation.');
+                }
+
+                return ['type' => 'success', 'message' => 'Quotation deleted successfully.'];
 
             case 'return_status':
                 if ($currentPage !== 'returns') {
@@ -3947,11 +4110,95 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                             </tr>
                         </thead>
                         <tbody>
-                            <tr>
-                                <td colspan="6" style="text-align:center; padding: 20px;">
-                                    <i class="fa-solid fa-truck"></i> No deliveries recorded yet
-                                </td>
-                            </tr>
+                            <?php if (count($deliveriesRecords) === 0): ?>
+                                <tr>
+                                    <td colspan="6" style="text-align:center; padding: 20px;">
+                                        <i class="fa-solid fa-truck"></i> No deliveries recorded yet
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($deliveriesRecords as $delivery): ?>
+                                    <?php
+                                        $deliveryStatus = trim((string) ($delivery['status'] ?? 'Pending'));
+                                        if ($deliveryStatus === '') {
+                                            $deliveryStatus = 'Pending';
+                                        }
+                                        $deliveryStatusClass = strtolower($deliveryStatus) === 'delivered'
+                                            ? 'success'
+                                            : (strtolower($deliveryStatus) === 'cancelled' ? 'danger' : 'warning');
+                                        $deliveryDateRaw = (string) ($delivery['created_at'] ?? '');
+                                        $deliveryDateTs = strtotime($deliveryDateRaw);
+                                        $deliveryDateLabel = $deliveryDateTs !== false
+                                            ? date('M d, Y H:i', $deliveryDateTs)
+                                            : $deliveryDateRaw;
+                                        $deliveryCustomer = (string) (($delivery['customer_name'] ?? '') !== ''
+                                            ? $delivery['customer_name']
+                                            : ('Customer #' . (int) ($delivery['customer_id'] ?? 0)));
+                                        $deliveryId = (int) ($delivery['id'] ?? 0);
+                                    ?>
+                                    <tr>
+                                        <td><strong><?= e((string) ($delivery['delivery_no'] ?? '')) ?></strong></td>
+                                        <td><?= e($deliveryCustomer) ?></td>
+                                        <td>Tsh <?= moneyFormat((float) ($delivery['amount'] ?? 0)) ?></td>
+                                        <td><span class="status-badge <?= e($deliveryStatusClass) ?>"><?= e($deliveryStatus) ?></span></td>
+                                        <td><?= e($deliveryDateLabel) ?></td>
+                                        <td>
+                                            <button
+                                                class="btn-icon"
+                                                data-action="viewDelivery"
+                                                data-delivery-id="<?= $deliveryId ?>"
+                                                data-delivery-no="<?= e((string) ($delivery['delivery_no'] ?? '')) ?>"
+                                                data-customer="<?= e($deliveryCustomer) ?>"
+                                                data-amount="<?= moneyFormat((float) ($delivery['amount'] ?? 0)) ?>"
+                                                data-status="<?= e($deliveryStatus) ?>"
+                                                data-date="<?= e($deliveryDateLabel) ?>"
+                                                title="View"
+                                            >
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                            <?php if (strtolower($deliveryStatus) === 'pending'): ?>
+                                                <button
+                                                    class="btn-icon"
+                                                    data-action="updateDeliveryStatus"
+                                                    data-value="<?= $deliveryId ?>"
+                                                    data-status="In Transit"
+                                                    title="Mark In Transit"
+                                                >
+                                                    <i class="fa-solid fa-truck-fast"></i>
+                                                </button>
+                                                <button
+                                                    class="btn-icon danger"
+                                                    data-action="updateDeliveryStatus"
+                                                    data-value="<?= $deliveryId ?>"
+                                                    data-status="Cancelled"
+                                                    title="Cancel Delivery"
+                                                >
+                                                    <i class="fa-solid fa-ban"></i>
+                                                </button>
+                                            <?php elseif (strtolower($deliveryStatus) === 'in transit'): ?>
+                                                <button
+                                                    class="btn-icon"
+                                                    data-action="updateDeliveryStatus"
+                                                    data-value="<?= $deliveryId ?>"
+                                                    data-status="Delivered"
+                                                    title="Mark Delivered"
+                                                >
+                                                    <i class="fa-solid fa-check"></i>
+                                                </button>
+                                                <button
+                                                    class="btn-icon danger"
+                                                    data-action="updateDeliveryStatus"
+                                                    data-value="<?= $deliveryId ?>"
+                                                    data-status="Cancelled"
+                                                    title="Cancel Delivery"
+                                                >
+                                                    <i class="fa-solid fa-ban"></i>
+                                                </button>
+                                            <?php endif; ?>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
@@ -4057,11 +4304,129 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                             </tr>
                         </thead>
                         <tbody>
-                            <tr>
-                                <td colspan="6" style="text-align:center; padding: 20px;">
-                                    <i class="fa-solid fa-rectangle-list"></i> No quotations created yet
-                                </td>
-                            </tr>
+                            <?php if (count($quotationsRecords) === 0): ?>
+                                <tr>
+                                    <td colspan="6" style="text-align:center; padding: 20px;">
+                                        <i class="fa-solid fa-rectangle-list"></i> No quotations created yet
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($quotationsRecords as $quotation): ?>
+                                    <?php
+                                        $quotationStatus = trim((string) ($quotation['status'] ?? ''));
+                                        if ($quotationStatus === '') {
+                                            $quotationStatus = 'Pending';
+                                        }
+                                        $quotationStatusClass = strtolower($quotationStatus) === 'approved'
+                                            ? 'success'
+                                            : (strtolower($quotationStatus) === 'rejected' ? 'danger' : 'warning');
+                                        $quotationDateRaw = (string) ($quotation['created_at'] ?? '');
+                                        $quotationDateTs = strtotime($quotationDateRaw);
+                                        $quotationDateLabel = $quotationDateTs !== false
+                                            ? date('M d, Y H:i', $quotationDateTs)
+                                            : $quotationDateRaw;
+                                        $quotationCustomer = (string) (($quotation['customer_name'] ?? '') !== ''
+                                            ? $quotation['customer_name']
+                                            : ('Customer #' . (int) ($quotation['customer_id'] ?? 0)));
+                                        $quotationId = (int) ($quotation['id'] ?? 0);
+                                        $canManageQuotation = in_array(strtolower(trim($userRole)), ['admin', 'manager'], true);
+                                    ?>
+                                    <tr>
+                                        <td><strong><?= e((string) ($quotation['quotation_no'] ?? '')) ?></strong></td>
+                                        <td><?= e($quotationCustomer) ?></td>
+                                        <td>Tsh <?= moneyFormat((float) ($quotation['amount'] ?? 0)) ?></td>
+                                        <td><span class="status-badge <?= e($quotationStatusClass) ?>"><?= e($quotationStatus) ?></span></td>
+                                        <td><?= e($quotationDateLabel) ?></td>
+                                        <td>
+                                            <button
+                                                class="btn-icon"
+                                                data-action="viewQuotation"
+                                                data-quotation-id="<?= $quotationId ?>"
+                                                data-quotation-no="<?= e((string) ($quotation['quotation_no'] ?? '')) ?>"
+                                                data-customer="<?= e($quotationCustomer) ?>"
+                                                data-amount="<?= moneyFormat((float) ($quotation['amount'] ?? 0)) ?>"
+                                                data-status="<?= e($quotationStatus) ?>"
+                                                data-date="<?= e($quotationDateLabel) ?>"
+                                                title="View"
+                                            >
+                                                <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                            <?php if (strtolower($quotationStatus) === 'pending' && $canManageQuotation): ?>
+                                                <button
+                                                    class="btn-icon"
+                                                    data-action="editQuotation"
+                                                    data-value="<?= $quotationId ?>"
+                                                    data-customer-id="<?= (int) ($quotation['customer_id'] ?? 0) ?>"
+                                                    data-customer="<?= e($quotationCustomer) ?>"
+                                                    data-amount-raw="<?= (float) ($quotation['amount'] ?? 0) ?>"
+                                                    title="Edit Quotation"
+                                                >
+                                                    <i class="fa-solid fa-pen"></i>
+                                                </button>
+                                            <?php endif; ?>
+                                            <button
+                                                class="btn-icon"
+                                                data-action="printQuotation"
+                                                data-value="<?= $quotationId ?>"
+                                                title="Print Quotation"
+                                            >
+                                                <i class="fa-solid fa-print"></i>
+                                            </button>
+                                            <?php if (strtolower($quotationStatus) !== 'approved' && $canManageQuotation): ?>
+                                                <button
+                                                    class="btn-icon danger"
+                                                    data-action="deleteQuotation"
+                                                    data-value="<?= $quotationId ?>"
+                                                    title="Delete Quotation"
+                                                >
+                                                    <i class="fa-solid fa-trash"></i>
+                                                </button>
+                                            <?php endif; ?>
+                                            <?php if (strtolower($quotationStatus) === 'pending' && $canManageQuotation): ?>
+                                                <button
+                                                    class="btn-icon"
+                                                    data-action="updateQuotationStatus"
+                                                    data-value="<?= $quotationId ?>"
+                                                    data-status="Approved"
+                                                    title="Approve Quotation"
+                                                >
+                                                    <i class="fa-solid fa-check"></i>
+                                                </button>
+                                                <button
+                                                    class="btn-icon danger"
+                                                    data-action="updateQuotationStatus"
+                                                    data-value="<?= $quotationId ?>"
+                                                    data-status="Rejected"
+                                                    title="Reject Quotation"
+                                                >
+                                                    <i class="fa-solid fa-ban"></i>
+                                                </button>
+                                            <?php elseif (strtolower($quotationStatus) === 'approved' && $canManageQuotation): ?>
+                                                <button
+                                                    class="btn-icon danger"
+                                                    data-action="updateQuotationStatus"
+                                                    data-value="<?= $quotationId ?>"
+                                                    data-status="Expired"
+                                                    title="Mark Expired"
+                                                >
+                                                    <i class="fa-solid fa-hourglass-end"></i>
+                                                </button>
+                                            <?php endif; ?>
+                                            <?php if (!$canManageQuotation): ?>
+                                                <button
+                                                    class="btn-icon"
+                                                    type="button"
+                                                    disabled
+                                                    title="Edit, status updates, and delete are available to Admin/Manager only"
+                                                    aria-label="Admin/Manager only actions"
+                                                >
+                                                    <i class="fa-solid fa-lock"></i>
+                                                </button>
+                                            <?php endif; ?>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>

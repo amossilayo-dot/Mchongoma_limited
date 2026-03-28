@@ -658,7 +658,7 @@ function initClock() {
     const now = new Date();
     const hours = now.getHours();
     const minutes = now.getMinutes().toString().padStart(2, "0");
-    const ampm = hours >= 12 ? "pm" : "am";
+    const ampm = hours >= 12 ? "PM" : "AM";
     const displayHours = hours % 12 || 12;
 
     const day = now.getDate().toString().padStart(2, "0");
@@ -943,6 +943,11 @@ function initActionBindings() {
       return;
     }
 
+    if (action === "viewDelivery") {
+      viewDelivery(target);
+      return;
+    }
+
     if (action === "viewReturn") {
       viewReturn(target);
       return;
@@ -950,6 +955,32 @@ function initActionBindings() {
 
     if (action === "viewPO") {
       viewPurchaseOrder(target);
+      return;
+    }
+
+    if (action === "viewQuotation") {
+      viewQuotation(target);
+      return;
+    }
+
+    if (action === "editQuotation") {
+      editQuotation(target);
+      return;
+    }
+
+    if (action === "printQuotation") {
+      printQuotation(parseInt(value, 10));
+      return;
+    }
+
+    if (action === "updateQuotationStatus") {
+      const status = target.getAttribute("data-status") || "";
+      updateQuotationStatus(parseInt(value, 10), status);
+      return;
+    }
+
+    if (action === "deleteQuotation") {
+      deleteQuotation(parseInt(value, 10));
       return;
     }
 
@@ -967,6 +998,12 @@ function initActionBindings() {
     if (action === "updateReceivingStatus") {
       const status = target.getAttribute("data-status") || "";
       updateReceivingStatus(parseInt(value, 10), status);
+      return;
+    }
+
+    if (action === "updateDeliveryStatus") {
+      const status = target.getAttribute("data-status") || "";
+      updateDeliveryStatus(parseInt(value, 10), status);
       return;
     }
 
@@ -1233,40 +1270,100 @@ function showNewSaleModal() {
     : [];
   let loadedProducts = [...products];
 
+  const normalizedCustomers = customers
+    .filter((customer) => customer && typeof customer === "object")
+    .map((customer) => ({
+      id: String(customer.id ?? "").trim(),
+      name: String(customer.name ?? "").trim(),
+    }))
+    .filter((customer) => customer.name !== "");
+
+  const existingWalkInIndex = normalizedCustomers.findIndex(
+    (customer) => customer.name.toLowerCase() === "walk-in customer",
+  );
+
   const walkInCustomer =
-            </div>
-            <div class="form-group">
-                <label>Amount (Tsh)</label>
-                <input id="saleAmount" type="number" name="amount" placeholder="Enter amount" required min="1" readonly>
-            </div>
-            <div class="form-group">
-                <label>Payment Method</label>
-                <select id="salePaymentMethod" name="payment_method">
-                    <option value="Cash">Cash</option>
-                    <option value="Mobile Money">Mobile Money</option>
-                    <option value="Card">Card</option>
-                    <option value="Bank Transfer">Bank Transfer</option>
-                </select>
-            </div>
-            <div id="mobileMoneyFields" style="display:none; border:1px solid #E5E7EB; border-radius:10px; padding:12px; background:#F9FAFB;">
-                <div class="form-group">
-                    <label>Mobile Money Provider</label>
-                    <select id="mobileMoneyProvider" name="mobile_money_provider">
-                        <option value="mpesa">M-Pesa</option>
-                        <option value="tigo_pesa">Tigo Pesa</option>
-                        <option value="airtel_money">Airtel Money</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Mobile Number</label>
-                    <input id="mobileMoneyPhone" type="tel" name="mobile_money_phone" placeholder="07XXXXXXXX or 2557XXXXXXXX">
-                </div>
-                <div class="form-group">
-                    <label>Payment Reference (Optional)</label>
-                    <input type="text" name="mobile_money_reference" placeholder="Invoice number or note">
-                </div>
-            </div>
-        </form>
+    existingWalkInIndex >= 0
+      ? normalizedCustomers[existingWalkInIndex]
+      : {
+          id: "1",
+          name: "Walk-in Customer",
+        };
+
+  const saleCustomers = [
+    walkInCustomer,
+    ...normalizedCustomers.filter((_, index) => index !== existingWalkInIndex),
+  ];
+
+  const customerOptions =
+    saleCustomers.length > 0
+      ? saleCustomers
+          .map(
+            (customer) =>
+              `<option value="${escapeHtml(customer.id)}"${customer.id === walkInCustomer.id ? " selected" : ""}>${escapeHtml(customer.name)}</option>`,
+          )
+          .join("")
+      : '<option value="1" selected>Walk-in Customer</option>';
+
+  const content = `
+      <form id="newSaleForm" method="POST" action="?page=sales">
+        <input type="hidden" name="action" value="create_entity">
+        <input type="hidden" name="entity" value="sale">
+        <input type="hidden" name="csrf_token" value="${csrfToken}">
+
+        <div class="form-group">
+          <label>Customer</label>
+          <select id="saleCustomer" name="customer_id" required>
+            ${customerOptions}
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Product</label>
+          <input id="saleProductSearch" type="text" placeholder="Search products..." autocomplete="off" required>
+          <input id="saleProductId" type="hidden" name="product_id">
+          <div id="saleProductResults" style="display:none; max-height:220px; overflow:auto; border:1px solid #E5E7EB; border-radius:8px; margin-top:8px; background:#FFFFFF;"></div>
+        </div>
+
+        <div class="form-group">
+          <label>Quantity</label>
+          <input id="saleQuantity" type="number" name="quantity" value="1" min="1" required>
+        </div>
+
+        <div class="form-group">
+          <label>Amount (Tsh)</label>
+          <input id="saleAmount" type="number" name="amount" placeholder="Enter amount" required min="1" readonly>
+        </div>
+
+        <div class="form-group">
+          <label>Payment Method</label>
+          <select id="salePaymentMethod" name="payment_method">
+            <option value="Cash">Cash</option>
+            <option value="Mobile Money">Mobile Money</option>
+            <option value="Card">Card</option>
+            <option value="Bank Transfer">Bank Transfer</option>
+          </select>
+        </div>
+
+        <div id="mobileMoneyFields" style="display:none; border:1px solid #E5E7EB; border-radius:10px; padding:12px; background:#F9FAFB;">
+          <div class="form-group">
+            <label>Mobile Money Provider</label>
+            <select id="mobileMoneyProvider" name="mobile_money_provider">
+              <option value="mpesa">M-Pesa</option>
+              <option value="tigo_pesa">Tigo Pesa</option>
+              <option value="airtel_money">Airtel Money</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Mobile Number</label>
+            <input id="mobileMoneyPhone" type="tel" name="mobile_money_phone" placeholder="07XXXXXXXX or 2557XXXXXXXX">
+          </div>
+          <div class="form-group">
+            <label>Payment Reference (Optional)</label>
+            <input type="text" name="mobile_money_reference" placeholder="Invoice number or note">
+          </div>
+        </div>
+      </form>
     `;
   openModal("Create New Sale", content, [
     { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
@@ -1684,7 +1781,8 @@ function openEntityModal(config) {
           .map((option) => {
             const optionValue = escapeHtml(option.value || "");
             const optionLabel = escapeHtml(option.label || option.value || "");
-            return `<option value="${optionValue}">${optionLabel}</option>`;
+            const isSelected = option.selected ? " selected" : "";
+            return `<option value="${optionValue}"${isSelected}>${optionLabel}</option>`;
           })
           .join("");
 
@@ -2134,6 +2232,56 @@ function editUserPermissions(userId, userName) {
   const rawOverrides = APP_CONFIG.userPermissionOverrides || {};
   const userOverrides =
     rawOverrides[userId] || rawOverrides[String(userId)] || {};
+
+  const permissionRows = pages
+    .map((page) => {
+      const key = String(page?.key || "").trim();
+      const title = String(page?.title || key || "Page").trim();
+      if (key === "") {
+        return "";
+      }
+
+      const overrideValue = userOverrides[key];
+      let selectedMode = "default";
+      if (typeof overrideValue === "boolean") {
+        selectedMode = overrideValue ? "allow" : "deny";
+      }
+
+      return `
+        <div class="form-group" style="margin-bottom:10px;">
+          <label style="display:flex; justify-content:space-between; gap:12px; align-items:center;">
+            <span>${escapeHtml(title)}</span>
+            <select name="permission_mode[${escapeHtml(key)}]" style="max-width:180px;">
+              <option value="default"${selectedMode === "default" ? " selected" : ""}>Default</option>
+              <option value="allow"${selectedMode === "allow" ? " selected" : ""}>Allow</option>
+              <option value="deny"${selectedMode === "deny" ? " selected" : ""}>Deny</option>
+            </select>
+          </label>
+        </div>
+      `;
+    })
+    .filter((row) => row !== "")
+    .join("");
+
+  const content = `
+    <form id="editUserPermissionsForm" method="POST" action="?page=users">
+      <input type="hidden" name="action" value="update_entity">
+      <input type="hidden" name="entity" value="user_permission_override">
+      <input type="hidden" name="id" value="${userId}">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <div class="form-group">
+        <label>User</label>
+        <input type="text" value="${safeName}" readonly>
+      </div>
+      ${
+        permissionRows !== ""
+          ? permissionRows
+          : '<p style="margin:0; color:#6B7280;">No page permissions available.</p>'
+      }
+    </form>
+  `;
+
+  openModal("Edit User Permissions", content, [
     { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
     {
       text: "Save Permissions",
@@ -2317,6 +2465,49 @@ function openAddInvoiceModal() {
 }
 
 function openAddDeliveryModal() {
+  const customers = Array.isArray(APP_CONFIG.saleCustomers)
+    ? APP_CONFIG.saleCustomers
+    : [];
+
+  if (customers.length === 0) {
+    showToast(
+      "warning",
+      "Please add at least one customer before creating a delivery.",
+    );
+    return;
+  }
+
+  const normalizedCustomers = customers
+    .map((customer) => ({
+      value: String(customer.id ?? "").trim(),
+      label: String(customer.name ?? `Customer #${customer.id || ""}`).trim(),
+    }))
+    .filter((customer) => customer.value !== "" && customer.label !== "");
+
+  const walkInIndex = normalizedCustomers.findIndex(
+    (customer) => customer.label.toLowerCase() === "walk-in customer",
+  );
+
+  const orderedCustomers =
+    walkInIndex >= 0
+      ? [
+          normalizedCustomers[walkInIndex],
+          ...normalizedCustomers.filter((_, index) => index !== walkInIndex),
+        ]
+      : [...normalizedCustomers];
+
+  const customerOptions = orderedCustomers
+    .map((customer, index) => ({
+      value: customer.value,
+      label: customer.label,
+      selected:
+        customer.label.toLowerCase() === "walk-in customer" ||
+        (walkInIndex < 0 && index === 0),
+    }))
+    .sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: "base" }),
+    );
+
   openEntityModal({
     key: "delivery",
     page: "deliveries",
@@ -2327,16 +2518,21 @@ function openAddDeliveryModal() {
     successMessage: "Delivery saved successfully!",
     fields: [
       {
-        label: "Customer ID",
+        label: "Customer",
         name: "customer_id",
-        type: "number",
+        type: "select",
         required: true,
-        placeholder: "Enter customer ID",
+        searchable: true,
+        searchPlaceholder: "Search customer by name...",
+        options: customerOptions,
       },
       {
         label: "Amount (Tsh)",
         name: "amount",
         type: "number",
+        required: true,
+        min: 1,
+        step: 0.01,
         placeholder: "Enter amount",
       },
     ],
@@ -2724,6 +2920,55 @@ function openAddReceivingModal() {
 }
 
 function openAddQuotationModal() {
+  const customers = Array.isArray(APP_CONFIG.saleCustomers)
+    ? APP_CONFIG.saleCustomers
+    : [];
+
+  if (customers.length === 0) {
+    showToast(
+      "warning",
+      "Please add at least one customer before creating a quotation.",
+    );
+    return;
+  }
+
+  const normalizedCustomers = customers
+    .map((customer) => ({
+      value: String(customer.id ?? "").trim(),
+      label: String(customer.name ?? `Customer #${customer.id || ""}`).trim(),
+    }))
+    .filter((customer) => customer.value !== "" && customer.label !== "");
+
+  const walkInIndex = normalizedCustomers.findIndex(
+    (customer) => customer.label.toLowerCase() === "walk-in customer",
+  );
+
+  const orderedCustomers =
+    walkInIndex >= 0
+      ? [
+          normalizedCustomers[walkInIndex],
+          ...normalizedCustomers.filter((_, index) => index !== walkInIndex),
+        ]
+      : [...normalizedCustomers];
+
+  orderedCustomers.sort((a, b) => {
+    if (a.label.toLowerCase() === "walk-in customer") {
+      return -1;
+    }
+    if (b.label.toLowerCase() === "walk-in customer") {
+      return 1;
+    }
+    return a.label.localeCompare(b.label, undefined, { sensitivity: "base" });
+  });
+
+  const customerOptions = orderedCustomers.map((customer, index) => ({
+    value: customer.value,
+    label: customer.label,
+    selected:
+      customer.label.toLowerCase() === "walk-in customer" ||
+      (walkInIndex < 0 && index === 0),
+  }));
+
   openEntityModal({
     key: "quotation",
     page: "quotations",
@@ -2734,17 +2979,21 @@ function openAddQuotationModal() {
     successMessage: "Quotation created successfully!",
     fields: [
       {
-        label: "Customer ID",
+        label: "Customer",
         name: "customer_id",
-        type: "number",
+        type: "select",
         required: true,
-        placeholder: "Enter customer ID",
+        searchable: true,
+        searchPlaceholder: "Search customer by name...",
+        options: customerOptions,
       },
       {
         label: "Amount (Tsh)",
         name: "amount",
         type: "number",
         required: true,
+        min: 1,
+        step: 0.01,
         placeholder: "Enter amount",
       },
     ],
@@ -4603,6 +4852,88 @@ function viewReceiving(id) {
   ]);
 }
 
+function viewDelivery(target) {
+  if (!target) {
+    return;
+  }
+
+  const id = Number.parseInt(
+    target.getAttribute("data-delivery-id") || "0",
+    10,
+  );
+  const deliveryNo = target.getAttribute("data-delivery-no") || "-";
+  const customer = target.getAttribute("data-customer") || "-";
+  const amount = target.getAttribute("data-amount") || "0";
+  const status = target.getAttribute("data-status") || "Pending";
+  const date = target.getAttribute("data-date") || "-";
+
+  const content = `
+    <div style="display:grid; gap:10px;">
+      <div><strong>Delivery ID:</strong> ${escapeHtml(String(Number.isFinite(id) ? id : 0))}</div>
+      <div><strong>Delivery No:</strong> ${escapeHtml(deliveryNo)}</div>
+      <div><strong>Customer:</strong> ${escapeHtml(customer)}</div>
+      <div><strong>Amount:</strong> Tsh ${escapeHtml(amount)}</div>
+      <div><strong>Status:</strong> ${escapeHtml(status)}</div>
+      <div><strong>Date:</strong> ${escapeHtml(date)}</div>
+    </div>
+  `;
+
+  openModal("Delivery Details", content, [
+    { text: "Close", class: "btn-primary", onclick: "closeModal()" },
+  ]);
+}
+
+function updateDeliveryStatus(id, status) {
+  const deliveryId = Number.parseInt(id, 10);
+  const normalizedStatus = String(status || "").trim();
+  if (!Number.isFinite(deliveryId) || deliveryId <= 0) {
+    showToast("error", "Invalid delivery ID");
+    return;
+  }
+
+  if (!["In Transit", "Delivered", "Cancelled"].includes(normalizedStatus)) {
+    showToast("error", "Invalid delivery status");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const iconClass =
+    normalizedStatus === "Delivered"
+      ? "fa-circle-check"
+      : normalizedStatus === "Cancelled"
+        ? "fa-ban"
+        : "fa-truck-fast";
+  const buttonClass =
+    normalizedStatus === "Delivered"
+      ? "btn-primary"
+      : normalizedStatus === "Cancelled"
+        ? "btn-danger"
+        : "btn-secondary";
+
+  const content = `
+    <form id="deliveryStatusForm" method="POST" action="?page=deliveries">
+      <input type="hidden" name="action" value="update_entity">
+      <input type="hidden" name="entity" value="delivery_status">
+      <input type="hidden" name="id" value="${deliveryId}">
+      <input type="hidden" name="status" value="${escapeHtml(normalizedStatus)}">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <div style="text-align: center; padding: 20px 0;">
+        <i class="fa-solid ${iconClass}" style="font-size: 48px; color: #4F46E5; margin-bottom: 16px;"></i>
+        <p style="margin: 0; font-size: 16px;">Set delivery status to ${escapeHtml(normalizedStatus)}?</p>
+      </div>
+    </form>
+  `;
+
+  openModal("Update Delivery", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: normalizedStatus,
+      class: buttonClass,
+      onclick: 'document.getElementById("deliveryStatusForm").requestSubmit()',
+    },
+  ]);
+}
+
 function updateReceivingStatus(id, status) {
   const receivingId = Number.parseInt(id, 10);
   const normalizedStatus = String(status || "").trim();
@@ -4899,7 +5230,8 @@ function updatePurchaseOrderStatus(id, status) {
     {
       text: normalizedStatus,
       class: buttonClass,
-      onclick: 'document.getElementById("purchaseOrderStatusForm").requestSubmit()',
+      onclick:
+        'document.getElementById("purchaseOrderStatusForm").requestSubmit()',
     },
   ]);
 }
@@ -5097,6 +5429,38 @@ function deleteCustomer(id) {
       text: "Delete",
       class: "btn-danger",
       onclick: 'document.getElementById("deleteCustomerForm").requestSubmit()',
+    },
+  ]);
+}
+
+function deleteQuotation(id) {
+  const quotationId = Number.parseInt(id, 10);
+  if (!Number.isFinite(quotationId) || quotationId <= 0) {
+    showToast("error", "Invalid quotation ID");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const content = `
+        <form id="deleteQuotationForm" method="POST" action="?page=quotations">
+            <input type="hidden" name="action" value="update_entity">
+            <input type="hidden" name="entity" value="quotation_delete">
+            <input type="hidden" name="id" value="${quotationId}">
+            <input type="hidden" name="csrf_token" value="${csrfToken}">
+        <div style="text-align: center; padding: 20px 0;">
+            <i class="fa-solid fa-trash" style="font-size: 48px; color: #EF4444; margin-bottom: 16px;"></i>
+            <p style="margin: 0; font-size: 16px;">Are you sure you want to delete this quotation?</p>
+            <p style="margin: 8px 0 0 0; font-size: 13px; color: #6B7280;">This action cannot be undone.</p>
+        </div>
+        </form>
+    `;
+
+  openModal("Confirm Delete", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: "Delete",
+      class: "btn-danger",
+      onclick: 'document.getElementById("deleteQuotationForm").requestSubmit()',
     },
   ]);
 }
@@ -5415,9 +5779,180 @@ function viewPurchaseOrder(target) {
     {
       text: "Print PO",
       class: "btn-secondary",
-      onclick: `printPurchaseOrder(${Number.isFinite(poId) ? poId : 0})`,
+      handler: () => printPurchaseOrder(Number.isFinite(poId) ? poId : 0),
     },
     { text: "Close", class: "btn-primary", onclick: "closeModal()" },
+  ]);
+}
+
+function viewQuotation(target) {
+  if (!target) {
+    return;
+  }
+
+  const quotationId = Number.parseInt(
+    target.getAttribute("data-quotation-id") || "0",
+    10,
+  );
+  const quotationNo = target.getAttribute("data-quotation-no") || "-";
+  const customer = target.getAttribute("data-customer") || "-";
+  const amount = target.getAttribute("data-amount") || "0";
+  const status = target.getAttribute("data-status") || "Pending";
+  const date = target.getAttribute("data-date") || "-";
+
+  const content = `
+    <div style="display:grid; gap:10px;">
+      <div><strong>Quotation No:</strong> ${escapeHtml(quotationNo)}</div>
+      <div><strong>Customer:</strong> ${escapeHtml(customer)}</div>
+      <div><strong>Amount:</strong> Tsh ${escapeHtml(amount)}</div>
+      <div><strong>Status:</strong> ${escapeHtml(status)}</div>
+      <div><strong>Date:</strong> ${escapeHtml(date)}</div>
+    </div>
+  `;
+
+  openModal("Quotation Details", content, [
+    {
+      text: "Print Quotation",
+      class: "btn-secondary",
+      handler: () =>
+        printQuotation(Number.isFinite(quotationId) ? quotationId : 0),
+    },
+    { text: "Close", class: "btn-primary", onclick: "closeModal()" },
+  ]);
+}
+
+function editQuotation(target) {
+  if (!target) {
+    return;
+  }
+
+  const quotationId = Number.parseInt(
+    target.getAttribute("data-value") || "0",
+    10,
+  );
+  if (!Number.isFinite(quotationId) || quotationId <= 0) {
+    showToast("error", "Invalid quotation ID");
+    return;
+  }
+
+  const currentCustomerId = String(
+    target.getAttribute("data-customer-id") || "",
+  ).trim();
+  const currentCustomerName = String(
+    target.getAttribute("data-customer") || "",
+  ).trim();
+  const currentAmount = Number.parseFloat(
+    String(target.getAttribute("data-amount-raw") || "0"),
+  );
+
+  const customers = Array.isArray(APP_CONFIG.saleCustomers)
+    ? APP_CONFIG.saleCustomers
+    : [];
+  if (customers.length === 0) {
+    showToast("warning", "Please add at least one customer first.");
+    return;
+  }
+
+  const customerOptions = customers
+    .map((customer) => {
+      const customerId = String(customer.id ?? "").trim();
+      const customerLabel = String(
+        customer.name ?? `Customer #${customer.id || ""}`,
+      ).trim();
+      if (customerId === "" || customerLabel === "") {
+        return "";
+      }
+
+      const selected =
+        customerId === currentCustomerId ||
+        (currentCustomerId === "" && customerLabel === currentCustomerName)
+          ? " selected"
+          : "";
+      return `<option value="${escapeHtml(customerId)}"${selected}>${escapeHtml(customerLabel)}</option>`;
+    })
+    .filter((entry) => entry !== "")
+    .join("");
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const content = `
+    <form id="editQuotationForm" method="POST" action="?page=quotations">
+      <input type="hidden" name="action" value="update_entity">
+      <input type="hidden" name="entity" value="quotation">
+      <input type="hidden" name="id" value="${quotationId}">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+
+      <div class="form-group">
+        <label>Customer</label>
+        <select name="customer_id" required>
+          ${customerOptions}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Amount (Tsh)</label>
+        <input type="number" name="amount" min="1" step="0.01" required value="${escapeHtml(String(Number.isFinite(currentAmount) ? currentAmount : 0))}">
+      </div>
+    </form>
+  `;
+
+  openModal("Edit Quotation", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: "Save Changes",
+      class: "btn-primary",
+      onclick: 'document.getElementById("editQuotationForm").requestSubmit()',
+    },
+  ]);
+}
+
+function updateQuotationStatus(id, status) {
+  const quotationId = Number.parseInt(id, 10);
+  const normalizedStatus = String(status || "").trim();
+  if (!Number.isFinite(quotationId) || quotationId <= 0) {
+    showToast("error", "Invalid quotation ID");
+    return;
+  }
+
+  if (!["Approved", "Rejected", "Expired"].includes(normalizedStatus)) {
+    showToast("error", "Invalid quotation status");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const iconClass =
+    normalizedStatus === "Approved"
+      ? "fa-circle-check"
+      : normalizedStatus === "Rejected"
+        ? "fa-ban"
+        : "fa-hourglass-end";
+  const buttonClass =
+    normalizedStatus === "Approved"
+      ? "btn-primary"
+      : normalizedStatus === "Rejected"
+        ? "btn-danger"
+        : "btn-secondary";
+
+  const content = `
+    <form id="quotationStatusForm" method="POST" action="?page=quotations">
+      <input type="hidden" name="action" value="update_entity">
+      <input type="hidden" name="entity" value="quotation_status">
+      <input type="hidden" name="id" value="${quotationId}">
+      <input type="hidden" name="status" value="${escapeHtml(normalizedStatus)}">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <div style="text-align: center; padding: 20px 0;">
+        <i class="fa-solid ${iconClass}" style="font-size: 48px; color: #4F46E5; margin-bottom: 16px;"></i>
+        <p style="margin: 0; font-size: 16px;">Set quotation status to ${escapeHtml(normalizedStatus)}?</p>
+      </div>
+    </form>
+  `;
+
+  openModal("Update Quotation", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: normalizedStatus,
+      class: buttonClass,
+      onclick: 'document.getElementById("quotationStatusForm").requestSubmit()',
+    },
   ]);
 }
 
@@ -5465,6 +6000,20 @@ function printPurchaseOrder(id) {
 
   window.open(
     `export_purchase_order_pdf.php?po_id=${encodeURIComponent(purchaseOrderId)}`,
+    "_blank",
+    "noopener",
+  );
+}
+
+function printQuotation(id) {
+  const quotationId = Number.parseInt(id, 10);
+  if (!Number.isFinite(quotationId) || quotationId <= 0) {
+    showToast("error", "Invalid quotation ID");
+    return;
+  }
+
+  window.open(
+    `export_quotation_pdf.php?quotation_id=${encodeURIComponent(quotationId)}`,
     "_blank",
     "noopener",
   );
