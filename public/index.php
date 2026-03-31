@@ -708,6 +708,7 @@ function resolveEntityPageKey(string $entity): ?string
         'customer_delete' => 'customers',
         'customer_payment' => 'customers',
         'supplier' => 'suppliers',
+        'supplier_delete' => 'suppliers',
         'employee' => 'employees',
         'user' => 'users',
         'user_status' => 'users',
@@ -1967,6 +1968,44 @@ function handleEntityUpdate(PDO $pdo, string $currentPage, string $userRole): ar
                 }
 
                 return ['type' => 'success', 'message' => 'Customer deleted successfully.'];
+
+            case 'supplier':
+                if ($currentPage !== 'suppliers') {
+                    throw new RuntimeException('Supplier updates are only allowed from the suppliers page.');
+                }
+
+                $supplierId = (int) ($_POST['id'] ?? 0);
+                if ($supplierId <= 0) {
+                    throw new RuntimeException('Invalid supplier ID.');
+                }
+
+                (new SuppliersRepository($pdo))->updateSupplier($supplierId, [
+                    'name' => (string) ($_POST['name'] ?? ''),
+                    'contact_person' => (string) ($_POST['contact_person'] ?? ''),
+                    'phone' => (string) ($_POST['phone'] ?? ''),
+                    'email' => (string) ($_POST['email'] ?? ''),
+                    'address' => (string) ($_POST['address'] ?? ''),
+                    'status' => (string) ($_POST['status'] ?? 'Active'),
+                ]);
+
+                return ['type' => 'success', 'message' => 'Supplier updated successfully.'];
+
+            case 'supplier_delete':
+                if ($currentPage !== 'suppliers') {
+                    throw new RuntimeException('Supplier deletions are only allowed from the suppliers page.');
+                }
+
+                $supplierId = (int) ($_POST['id'] ?? 0);
+                if ($supplierId <= 0) {
+                    throw new RuntimeException('Invalid supplier ID.');
+                }
+
+                $deleted = (new SuppliersRepository($pdo))->deleteSupplier($supplierId);
+                if (!$deleted) {
+                    throw new RuntimeException('Could not delete supplier.');
+                }
+
+                return ['type' => 'success', 'message' => 'Supplier deleted successfully.'];
 
             case 'user':
                 if ($currentPage !== 'users') {
@@ -3596,8 +3635,9 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
             <section class="page-content report-redesign-page">
                 <div class="report-headline-row">
                     <div class="page-info">
-                        <h2>Reports</h2>
-                        <p>Sales analytics and insights</p>
+                        <span class="report-eyebrow">Business Intelligence</span>
+                        <h2>Reports & Performance</h2>
+                        <p>Executive analytics across revenue, profit, products, and team output</p>
                         <p class="report-period-note">
                             Period: <strong><?= e($reportRangeLabel) ?></strong>
                             <span class="report-period-sep">|</span>
@@ -3616,13 +3656,37 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                         <a class="btn btn-secondary" href="export_report_pdf.php?range=<?= e($reportExportRange) ?>&amp;disposition=inline" target="_blank" rel="noopener">
                             <i class="fa-solid fa-print"></i> Print Report
                         </a>
-                        <button class="btn btn-secondary" type="button" data-action="generateReport" data-value="<?= e($reportExportRange) ?>">
-                            <i class="fa-solid fa-download"></i> Export CSV
-                        </button>
-                        <button class="btn btn-secondary" type="button" data-action="generateReport" data-value="<?= e($reportExportRange) ?>">
+                        <a class="btn btn-secondary" href="export_report_pdf.php?range=<?= e($reportExportRange) ?>&amp;disposition=attachment" rel="noopener">
+                            <i class="fa-solid fa-download"></i> Download PDF
+                        </a>
+                        <a class="btn btn-secondary" href="export_report_csv.php?range=<?= e($reportExportRange) ?>" rel="noopener">
+                            <i class="fa-solid fa-file-csv"></i> Export CSV
+                        </a>
+                        <a class="btn btn-secondary" href="export_report_xlsx.php?range=<?= e($reportExportRange) ?>" rel="noopener">
                             <i class="fa-regular fa-file-excel"></i> Export Excel
-                        </button>
+                        </a>
+                        <a class="btn btn-secondary" href="?page=reports&amp;range=<?= e($reportRange) ?>">
+                            <i class="fa-solid fa-rotate-right"></i> Refresh
+                        </a>
                     </div>
+                </div>
+
+                <div class="report-snapshot-grid">
+                    <article class="report-snapshot-card">
+                        <span class="label"><i class="fa-solid fa-calendar-week"></i> Active Period</span>
+                        <strong><?= e($reportRangeLabel) ?></strong>
+                        <small>Reporting scope currently selected</small>
+                    </article>
+                    <article class="report-snapshot-card">
+                        <span class="label"><i class="fa-solid fa-arrow-trend-up"></i> Revenue per Transaction</span>
+                        <strong>Tsh <?= moneyFormat($reportTransactionsTotal > 0 ? ($reportRevenueTotal / $reportTransactionsTotal) : 0) ?></strong>
+                        <small>Average value generated per sale</small>
+                    </article>
+                    <article class="report-snapshot-card">
+                        <span class="label"><i class="fa-solid fa-chart-pie"></i> Profitability Mix</span>
+                        <strong><?= number_format($reportProfitMargin, 1) ?>%</strong>
+                        <small>Share of revenue retained as profit</small>
+                    </article>
                 </div>
 
                 <div class="report-kpi-grid">
@@ -3797,8 +3861,41 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                         <td><?= e((string) (($supplier['email'] ?? '') !== '' ? $supplier['email'] : 'N/A')) ?></td>
                                         <td><span class="status-badge <?= e($statusClass) ?>"><?= e($status) ?></span></td>
                                         <td>
-                                            <button class="btn-icon" title="View">
+                                            <button
+                                                class="btn-icon"
+                                                data-action="viewSupplier"
+                                                data-value="<?= (int) ($supplier['id'] ?? 0) ?>"
+                                                data-name="<?= e((string) ($supplier['name'] ?? '')) ?>"
+                                                data-contact="<?= e((string) (($supplier['contact_person'] ?? '') !== '' ? $supplier['contact_person'] : 'N/A')) ?>"
+                                                data-phone="<?= e((string) (($supplier['phone'] ?? '') !== '' ? $supplier['phone'] : 'N/A')) ?>"
+                                                data-email="<?= e((string) (($supplier['email'] ?? '') !== '' ? $supplier['email'] : 'N/A')) ?>"
+                                                data-address="<?= e((string) (($supplier['address'] ?? '') !== '' ? $supplier['address'] : 'N/A')) ?>"
+                                                data-status="<?= e($status) ?>"
+                                                title="View"
+                                            >
                                                 <i class="fa-solid fa-eye"></i>
+                                            </button>
+                                            <button
+                                                class="btn-icon"
+                                                data-action="editSupplier"
+                                                data-value="<?= (int) ($supplier['id'] ?? 0) ?>"
+                                                data-name="<?= e((string) ($supplier['name'] ?? '')) ?>"
+                                                data-contact="<?= e((string) (($supplier['contact_person'] ?? '') !== '' ? $supplier['contact_person'] : '')) ?>"
+                                                data-phone="<?= e((string) (($supplier['phone'] ?? '') !== '' ? $supplier['phone'] : '')) ?>"
+                                                data-email="<?= e((string) (($supplier['email'] ?? '') !== '' ? $supplier['email'] : '')) ?>"
+                                                data-address="<?= e((string) (($supplier['address'] ?? '') !== '' ? $supplier['address'] : '')) ?>"
+                                                data-status="<?= e($status) ?>"
+                                                title="Edit"
+                                            >
+                                                <i class="fa-solid fa-pen"></i>
+                                            </button>
+                                            <button
+                                                class="btn-icon danger"
+                                                data-action="deleteSupplier"
+                                                data-value="<?= (int) ($supplier['id'] ?? 0) ?>"
+                                                title="Delete"
+                                            >
+                                                <i class="fa-solid fa-trash"></i>
                                             </button>
                                         </td>
                                     </tr>

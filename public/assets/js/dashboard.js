@@ -938,6 +938,21 @@ function initActionBindings() {
       return;
     }
 
+    if (action === "viewSupplier") {
+      viewSupplier(target);
+      return;
+    }
+
+    if (action === "editSupplier") {
+      editSupplier(target);
+      return;
+    }
+
+    if (action === "deleteSupplier") {
+      deleteSupplier(parseInt(value, 10));
+      return;
+    }
+
     if (action === "viewReceiving") {
       viewReceiving(parseInt(value, 10));
       return;
@@ -5076,6 +5091,136 @@ function viewEmployee(target) {
 
   openModal("Employee Details", content, [
     { text: "Close", class: "btn-primary", onclick: "closeModal()" },
+  ]);
+}
+
+function viewSupplier(target) {
+  if (!target) {
+    return;
+  }
+
+  const id = Number.parseInt(target.getAttribute("data-value") || "0", 10);
+  const name = target.getAttribute("data-name") || "-";
+  const contact = target.getAttribute("data-contact") || "N/A";
+  const phone = target.getAttribute("data-phone") || "N/A";
+  const email = target.getAttribute("data-email") || "N/A";
+  const address = target.getAttribute("data-address") || "N/A";
+  const status = target.getAttribute("data-status") || "Active";
+
+  const content = `
+    <div style="display:grid; gap:10px;">
+      <div><strong>ID:</strong> ${escapeHtml(String(Number.isFinite(id) ? id : 0))}</div>
+      <div><strong>Name:</strong> ${escapeHtml(name)}</div>
+      <div><strong>Contact Person:</strong> ${escapeHtml(contact)}</div>
+      <div><strong>Phone:</strong> ${escapeHtml(phone)}</div>
+      <div><strong>Email:</strong> ${escapeHtml(email)}</div>
+      <div><strong>Address:</strong> ${escapeHtml(address)}</div>
+      <div><strong>Status:</strong> ${escapeHtml(status)}</div>
+    </div>
+  `;
+
+  openModal("Supplier Details", content, [
+    { text: "Close", class: "btn-primary", onclick: "closeModal()" },
+  ]);
+}
+
+function editSupplier(target) {
+  if (!target) {
+    return;
+  }
+
+  const supplierId = Number.parseInt(
+    target.getAttribute("data-value") || "0",
+    10,
+  );
+  if (!Number.isFinite(supplierId) || supplierId <= 0) {
+    showToast("error", "Invalid supplier ID");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const name = target.getAttribute("data-name") || "";
+  const contact = target.getAttribute("data-contact") || "";
+  const phone = target.getAttribute("data-phone") || "";
+  const email = target.getAttribute("data-email") || "";
+  const address = target.getAttribute("data-address") || "";
+  const status = target.getAttribute("data-status") || "Active";
+
+  const content = `
+    <form id="editSupplierForm" method="POST" action="?page=suppliers">
+      <input type="hidden" name="action" value="update_entity">
+      <input type="hidden" name="entity" value="supplier">
+      <input type="hidden" name="id" value="${supplierId}">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <div class="form-group">
+        <label>Supplier Name</label>
+        <input type="text" name="name" required value="${escapeHtml(name)}">
+      </div>
+      <div class="form-group">
+        <label>Contact Person</label>
+        <input type="text" name="contact_person" value="${escapeHtml(contact)}">
+      </div>
+      <div class="form-group">
+        <label>Phone</label>
+        <input type="text" name="phone" value="${escapeHtml(phone)}">
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" name="email" value="${escapeHtml(email)}">
+      </div>
+      <div class="form-group">
+        <label>Address</label>
+        <textarea name="address" rows="3">${escapeHtml(address)}</textarea>
+      </div>
+      <div class="form-group">
+        <label>Status</label>
+        <select name="status" required>
+          <option value="Active"${status === "Active" ? " selected" : ""}>Active</option>
+          <option value="Inactive"${status === "Inactive" ? " selected" : ""}>Inactive</option>
+        </select>
+      </div>
+    </form>
+  `;
+
+  openModal("Edit Supplier", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: "Save Changes",
+      class: "btn-primary",
+      onclick: 'document.getElementById("editSupplierForm").requestSubmit()',
+    },
+  ]);
+}
+
+function deleteSupplier(id) {
+  const supplierId = Number.parseInt(id, 10);
+  if (!Number.isFinite(supplierId) || supplierId <= 0) {
+    showToast("error", "Invalid supplier ID");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const content = `
+    <form id="deleteSupplierForm" method="POST" action="?page=suppliers">
+      <input type="hidden" name="action" value="update_entity">
+      <input type="hidden" name="entity" value="supplier_delete">
+      <input type="hidden" name="id" value="${supplierId}">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <div style="text-align: center; padding: 20px 0;">
+        <i class="fa-solid fa-trash" style="font-size: 48px; color: #EF4444; margin-bottom: 16px;"></i>
+        <p style="margin: 0; font-size: 16px;">Are you sure you want to delete this supplier?</p>
+        <p style="margin: 8px 0 0 0; font-size: 13px; color: #6B7280;">This action cannot be undone.</p>
+      </div>
+    </form>
+  `;
+
+  openModal("Confirm Delete", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: "Delete",
+      class: "btn-danger",
+      onclick: 'document.getElementById("deleteSupplierForm").requestSubmit()',
+    },
   ]);
 }
 
