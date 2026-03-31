@@ -3001,7 +3001,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                 <span class="icon-btn notification-btn" data-action="showNotifications">
                     <i class="fa-regular fa-bell"></i>
                     <?php if ($lowStock['count'] > 0): ?>
-                        <span class="badge"><?= $lowStock['count'] ?></span>
+                        <span class="badge"><?= (int) $lowStock['count'] > 99 ? '99+' : (string) (int) $lowStock['count'] ?></span>
                     <?php endif; ?>
                 </span>
                 <span class="pill"><?= e($userName) ?></span>
