@@ -1010,6 +1010,21 @@ function initActionBindings() {
       return;
     }
 
+    if (action === "viewExpense") {
+      viewExpense(target);
+      return;
+    }
+
+    if (action === "editExpense") {
+      editExpense(target);
+      return;
+    }
+
+    if (action === "deleteExpense") {
+      deleteExpense(parseInt(value, 10));
+      return;
+    }
+
     if (action === "updateReceivingStatus") {
       const status = target.getAttribute("data-status") || "";
       updateReceivingStatus(parseInt(value, 10), status);
@@ -2413,6 +2428,122 @@ function openAddExpenseModal() {
       },
     ],
   });
+}
+
+function viewExpense(target) {
+  if (!target) {
+    return;
+  }
+
+  const id = Number.parseInt(target.getAttribute("data-value") || "0", 10);
+  const description = target.getAttribute("data-description") || "-";
+  const category = target.getAttribute("data-category") || "General";
+  const amount = target.getAttribute("data-amount") || "0";
+  const status = target.getAttribute("data-status") || "Pending";
+  const date = target.getAttribute("data-date") || "-";
+
+  const content = `
+    <div style="display:grid; gap:10px;">
+      <div><strong>ID:</strong> ${escapeHtml(String(Number.isFinite(id) ? id : 0))}</div>
+      <div><strong>Description:</strong> ${escapeHtml(description)}</div>
+      <div><strong>Category:</strong> ${escapeHtml(category)}</div>
+      <div><strong>Amount:</strong> Tsh ${escapeHtml(amount)}</div>
+      <div><strong>Status:</strong> ${escapeHtml(status)}</div>
+      <div><strong>Date:</strong> ${escapeHtml(date)}</div>
+    </div>
+  `;
+
+  openModal("Expense Details", content, [
+    { text: "Close", class: "btn-primary", onclick: "closeModal()" },
+  ]);
+}
+
+function editExpense(target) {
+  if (!target) {
+    return;
+  }
+
+  const id = Number.parseInt(target.getAttribute("data-value") || "0", 10);
+  if (!Number.isFinite(id) || id <= 0) {
+    showToast("error", "Invalid expense ID");
+    return;
+  }
+
+  const description = target.getAttribute("data-description") || "";
+  const category = target.getAttribute("data-category") || "";
+  const amount = target.getAttribute("data-amount") || "0";
+  const status = target.getAttribute("data-status") || "Pending";
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+
+  const content = `
+    <form id="editExpenseForm" method="POST" action="?page=expenses">
+      <input type="hidden" name="action" value="update_entity">
+      <input type="hidden" name="entity" value="expense">
+      <input type="hidden" name="id" value="${id}">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <div class="form-group">
+        <label>Description</label>
+        <input type="text" name="description" required value="${escapeHtml(description)}">
+      </div>
+      <div class="form-group">
+        <label>Category</label>
+        <input type="text" name="category" value="${escapeHtml(category)}" placeholder="Utilities, Transport, etc.">
+      </div>
+      <div class="form-group">
+        <label>Amount (Tsh)</label>
+        <input type="number" name="amount" min="0.01" step="0.01" required value="${escapeHtml(amount)}">
+      </div>
+      <div class="form-group">
+        <label>Status</label>
+        <select name="status">
+          <option value="Pending" ${status === "Pending" ? "selected" : ""}>Pending</option>
+          <option value="Approved" ${status === "Approved" ? "selected" : ""}>Approved</option>
+          <option value="Rejected" ${status === "Rejected" ? "selected" : ""}>Rejected</option>
+        </select>
+      </div>
+    </form>
+  `;
+
+  openModal("Edit Expense", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: "Save Changes",
+      class: "btn-primary",
+      onclick: 'document.getElementById("editExpenseForm").requestSubmit()',
+    },
+  ]);
+}
+
+function deleteExpense(id) {
+  const expenseId = Number.parseInt(id, 10);
+  if (!Number.isFinite(expenseId) || expenseId <= 0) {
+    showToast("error", "Invalid expense ID");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const content = `
+    <form id="deleteExpenseForm" method="POST" action="?page=expenses">
+      <input type="hidden" name="action" value="update_entity">
+      <input type="hidden" name="entity" value="expense_delete">
+      <input type="hidden" name="id" value="${expenseId}">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <div style="text-align: center; padding: 20px 0;">
+        <i class="fa-solid fa-trash" style="font-size: 48px; color: #EF4444; margin-bottom: 16px;"></i>
+        <p style="margin: 0; font-size: 16px;">Are you sure you want to delete this expense?</p>
+        <p style="margin: 8px 0 0 0; font-size: 13px; color: #6B7280;">This action cannot be undone.</p>
+      </div>
+    </form>
+  `;
+
+  openModal("Delete Expense", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: "Delete",
+      class: "btn-danger",
+      onclick: 'document.getElementById("deleteExpenseForm").requestSubmit()',
+    },
+  ]);
 }
 
 function openAddInvoiceModal() {

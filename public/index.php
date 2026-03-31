@@ -121,6 +121,7 @@ $saleCustomerOptions = [
 $allSales = $recentSales;
 $invoicesRecords = [];
 $quotationsRecords = [];
+$expensesRecords = [];
 $suppliers = [];
 $purchaseOrdersRecords = [];
 $purchaseOrderItemsByOrder = [];
@@ -263,6 +264,9 @@ try {
     $allSales = $salesRepo->getSales(50);
     if (canAccessPage('invoices', $userRole)) {
         $invoicesRecords = (new InvoicesRepository($pdo))->getInvoices(300);
+    }
+    if (canAccessPage('expenses', $userRole)) {
+        $expensesRecords = (new ExpensesRepository($pdo))->getExpenses(300);
     }
     if (canAccessPage('deliveries', $userRole)) {
         $deliveriesRecords = (new DeliveriesRepository($pdo))->getDeliveries(300);
@@ -716,6 +720,7 @@ function resolveEntityPageKey(string $entity): ?string
         'user_password_reset' => 'users',
         'user_permission_override' => 'users',
         'expense' => 'expenses',
+        'expense_delete' => 'expenses',
         'invoice' => 'invoices',
         'invoice_status' => 'invoices',
         'delivery' => 'deliveries',
@@ -2008,6 +2013,42 @@ function handleEntityUpdate(PDO $pdo, string $currentPage, string $userRole): ar
 
                 return ['type' => 'success', 'message' => 'Supplier deleted successfully.'];
 
+            case 'expense':
+                if ($currentPage !== 'expenses') {
+                    throw new RuntimeException('Expense updates are only allowed from the expenses page.');
+                }
+
+                $expenseId = (int) ($_POST['id'] ?? 0);
+                if ($expenseId <= 0) {
+                    throw new RuntimeException('Invalid expense ID.');
+                }
+
+                (new ExpensesRepository($pdo))->updateExpense($expenseId, [
+                    'description' => (string) ($_POST['description'] ?? ''),
+                    'category' => (string) ($_POST['category'] ?? ''),
+                    'amount' => (float) ($_POST['amount'] ?? 0),
+                    'status' => (string) ($_POST['status'] ?? 'Pending'),
+                ]);
+
+                return ['type' => 'success', 'message' => 'Expense updated successfully.'];
+
+            case 'expense_delete':
+                if ($currentPage !== 'expenses') {
+                    throw new RuntimeException('Expense deletions are only allowed from the expenses page.');
+                }
+
+                $expenseId = (int) ($_POST['id'] ?? 0);
+                if ($expenseId <= 0) {
+                    throw new RuntimeException('Invalid expense ID.');
+                }
+
+                $deleted = (new ExpensesRepository($pdo))->deleteExpense($expenseId);
+                if (!$deleted) {
+                    throw new RuntimeException('Could not delete expense.');
+                }
+
+                return ['type' => 'success', 'message' => 'Expense deleted successfully.'];
+
             case 'user':
                 if ($currentPage !== 'users') {
                     throw new RuntimeException('User role updates are only allowed from the users page.');
@@ -3069,7 +3110,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
             <section class="page-content dashboard-hero-shell">
                 <div class="dashboard-hero-content">
                     <div>
-                        <h2>Welcome back, <?= e($userName) ?></h2>
+                        <h2>Welcome back</h2>
                         <p>Track performance, monitor stock pressure, and launch key actions from one command center.</p>
                         <div class="dashboard-hero-meta">
                             <span><i class="fa-regular fa-clock"></i> Updated <?= e($reportGeneratedAt) ?></span>
@@ -4206,11 +4247,70 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                             </tr>
                         </thead>
                         <tbody>
-                            <tr>
-                                <td colspan="7" style="text-align:center; padding: 20px;">
-                                    <i class="fa-solid fa-receipt"></i> No expenses recorded yet
-                                </td>
-                            </tr>
+                            <?php if (count($expensesRecords) === 0): ?>
+                                <tr>
+                                    <td colspan="7" style="text-align:center; padding: 20px;">
+                                        <i class="fa-solid fa-receipt"></i> No expenses recorded yet
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($expensesRecords as $expense): ?>
+                                    <?php
+                                        $expenseStatus = trim((string) ($expense['status'] ?? 'Approved'));
+                                        $expenseStatusClass = strtolower($expenseStatus) === 'approved'
+                                            ? 'success'
+                                            : (strtolower($expenseStatus) === 'rejected' ? 'danger' : 'warning');
+                                        $expenseDateRaw = (string) ($expense['created_at'] ?? '');
+                                        $expenseDateTs = strtotime($expenseDateRaw);
+                                        $expenseDateLabel = $expenseDateTs !== false
+                                            ? date('M d, Y H:i', $expenseDateTs)
+                                            : $expenseDateRaw;
+                                    ?>
+                                    <tr>
+                                        <td>#<?= (int) ($expense['id'] ?? 0) ?></td>
+                                        <td><?= e((string) ($expense['description'] ?? '')) ?></td>
+                                        <td><?= e((string) ($expense['category'] ?? 'General')) ?></td>
+                                        <td>Tsh <?= moneyFormat((float) ($expense['amount'] ?? 0)) ?></td>
+                                        <td><span class="status-badge <?= e($expenseStatusClass) ?>"><?= e($expenseStatus) ?></span></td>
+                                        <td><?= e($expenseDateLabel) ?></td>
+                                        <td>
+                                            <button
+                                                class="btn-icon"
+                                                data-action="viewExpense"
+                                                data-value="<?= (int) ($expense['id'] ?? 0) ?>"
+                                                data-description="<?= e((string) ($expense['description'] ?? '')) ?>"
+                                                data-category="<?= e((string) ($expense['category'] ?? 'General')) ?>"
+                                                data-amount="<?= moneyFormat((float) ($expense['amount'] ?? 0)) ?>"
+                                                data-status="<?= e($expenseStatus) ?>"
+                                                data-date="<?= e($expenseDateLabel) ?>"
+                                                title="View Expense"
+                                            >
+                                                <i class="fa-regular fa-eye"></i>
+                                            </button>
+                                            <button
+                                                class="btn-icon"
+                                                data-action="editExpense"
+                                                data-value="<?= (int) ($expense['id'] ?? 0) ?>"
+                                                data-description="<?= e((string) ($expense['description'] ?? '')) ?>"
+                                                data-category="<?= e((string) ($expense['category'] ?? 'General')) ?>"
+                                                data-amount="<?= (float) ($expense['amount'] ?? 0) ?>"
+                                                data-status="<?= e($expenseStatus) ?>"
+                                                title="Edit Expense"
+                                            >
+                                                <i class="fa-regular fa-pen-to-square"></i>
+                                            </button>
+                                            <button
+                                                class="btn-icon danger"
+                                                data-action="deleteExpense"
+                                                data-value="<?= (int) ($expense['id'] ?? 0) ?>"
+                                                title="Delete Expense"
+                                            >
+                                                <i class="fa-regular fa-trash-can"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
