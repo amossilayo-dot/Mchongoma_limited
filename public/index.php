@@ -246,13 +246,14 @@ try {
         0
     );
     $customers = $customerRepo->getCustomers(50);
+    $saleProductLimit = max(500, $inventoryRepo->getTotalCount());
     $saleProductOptions = array_map(static fn(array $item) => [
         'id' => (int) ($item['id'] ?? 0),
         'name' => (string) ($item['name'] ?? ''),
         'category' => (string) ($item['category'] ?? ''),
         'stock_qty' => (int) ($item['stock_qty'] ?? 0),
         'unit_price' => (float) ($item['unit_price'] ?? 0),
-    ], $inventoryRepo->getProducts(500));
+    ], $inventoryRepo->getProducts($saleProductLimit));
     $poProductOptions = $inventoryRepo->getProducts(max(500, $inventoryRepo->getTotalCount()));
     $returnProductOptions = $inventoryRepo->getProducts(max(500, $inventoryRepo->getTotalCount()));
     $saleCustomerOptions = array_map(static fn(array $item) => [
@@ -2949,7 +2950,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" integrity="sha512-Evv84Mr4kqVGRNSgIGL/F/aIDqQb7xQ2vcrdIwxfjThSH8CSR7PBEakCr51Ck+w+/U6swU2Im1vVX0SVk9ABhg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     <link rel="stylesheet" href="assets/css/style.css">
 </head>
-<body class="<?= $currentPage === 'sales' ? 'sales-page' : '' ?>">
+<body class="<?= e($currentPage) ?>-page">
 <div class="app">
     <aside class="sidebar" id="sidebar">
         <div class="brand">
@@ -3065,7 +3066,29 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
 
         <?php if ($currentPage === 'dashboard'): ?>
             <!-- Dashboard Content -->
-            <section class="stats-grid">
+            <section class="page-content dashboard-hero-shell">
+                <div class="dashboard-hero-content">
+                    <div>
+                        <h2>Welcome back, <?= e($userName) ?></h2>
+                        <p>Track performance, monitor stock pressure, and launch key actions from one command center.</p>
+                        <div class="dashboard-hero-meta">
+                            <span><i class="fa-regular fa-clock"></i> Updated <?= e($reportGeneratedAt) ?></span>
+                            <span><i class="fa-solid fa-boxes-stacked"></i> <?= moneyFormat($inventoryTotalStockUnits) ?> units in stock</span>
+                            <span><i class="fa-solid fa-triangle-exclamation"></i> <?= moneyFormat((int) ($lowStock['count'] ?? 0)) ?> low stock alerts</span>
+                        </div>
+                    </div>
+                    <div class="dashboard-hero-actions">
+                        <button class="btn btn-primary" data-action="showNewSaleModal">
+                            <i class="fa-solid fa-cart-plus"></i> Start New Sale
+                        </button>
+                        <button class="btn btn-secondary" data-action="go" data-value="?page=reports">
+                            <i class="fa-solid fa-chart-line"></i> Open Reports
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <section class="stats-grid dashboard-kpi-grid">
                 <article class="stat-card stat-blue" data-action="go" data-value="?page=sales">
                     <div>
                         <p>Total Sales</p>
@@ -3096,9 +3119,9 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                 </article>
             </section>
 
-            <section class="welcome">Welcome to Mchongoma Limited, <?= e($userName) ?>! Choose a common task below to get started.</section>
+            <section class="welcome dashboard-welcome">Welcome to Mchongoma Limited, <?= e($userName) ?>! Choose a common task below to get started.</section>
 
-            <section class="quick-actions">
+            <section class="quick-actions dashboard-quick-actions">
                 <button data-action="showNewSaleModal"><i class="fa-solid fa-cart-plus"></i> Start a New Sale</button>
                 <button data-action="go" data-value="?page=inventory"><i class="fa-solid fa-cube"></i> View All Products</button>
                 <button data-action="go" data-value="?page=customers"><i class="fa-regular fa-user"></i> View Customers</button>
@@ -3108,8 +3131,8 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                 <button data-action="showEndOfDayReport"><i class="fa-regular fa-calendar-check"></i> End of Day Report</button>
             </section>
 
-            <section class="bottom-grid">
-                <article class="panel chart-panel">
+            <section class="bottom-grid dashboard-bottom-grid">
+                <article class="panel chart-panel dashboard-panel">
                     <div class="panel-header">
                         <h3>Sales Information</h3>
                         <div class="tabs" id="chartTabs">
@@ -3123,7 +3146,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                 </article>
 
                 <div class="side-panels">
-                    <article class="panel low-stock-panel">
+                    <article class="panel low-stock-panel dashboard-panel">
                         <div class="panel-header">
                             <h3><i class="fa-solid fa-triangle-exclamation"></i> Low Stock Alerts</h3>
                         </div>
@@ -3144,7 +3167,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                         <?php endif; ?>
                     </article>
 
-                    <article class="panel recent-sales">
+                    <article class="panel recent-sales dashboard-panel">
                         <div class="panel-header"><h3>Recent Sales</h3></div>
                         <?php foreach ($recentSales as $sale): ?>
                             <div class="sale-row">
@@ -3164,11 +3187,11 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
 
         <?php elseif ($currentPage === 'inventory'): ?>
             <!-- Inventory Page -->
-            <section class="page-content">
-                <div class="page-header">
+            <section class="page-content inventory-page-shell">
+                <div class="page-header inventory-page-header">
                     <div class="page-info">
                         <h2>Product Inventory</h2>
-                        <p>Manage your products and stock levels</p>
+                        <p>Control stock health, pricing, and product visibility in real time.</p>
                         <p style="margin-top:6px; color:#6B7280; font-size:13px;">
                             <?= moneyFormat($inventoryProductCount) ?> items found
                             <span style="margin:0 6px;">|</span>
@@ -3188,6 +3211,30 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                     </div>
                 </div>
 
+                <div class="inventory-kpi-grid">
+                    <article class="inventory-kpi-card">
+                        <span>Total Products</span>
+                        <strong><?= moneyFormat($inventoryProductCount) ?></strong>
+                    </article>
+                    <article class="inventory-kpi-card">
+                        <span>Total Units In Stock</span>
+                        <strong><?= moneyFormat($inventoryTotalStockUnits) ?></strong>
+                    </article>
+                    <article class="inventory-kpi-card <?= $lowStock['count'] > 0 ? 'warning' : 'success' ?>">
+                        <span>Low Stock Items</span>
+                        <strong><?= moneyFormat((int) ($lowStock['count'] ?? 0)) ?></strong>
+                    </article>
+                    <article class="inventory-kpi-card">
+                        <span>Average Unit Price</span>
+                        <?php
+                            $inventoryAverageUnitPrice = $inventoryProductCount > 0
+                                ? array_sum(array_map(static fn(array $item): float => (float) ($item['unit_price'] ?? 0), $products)) / $inventoryProductCount
+                                : 0.0;
+                        ?>
+                        <strong>Tsh <?= moneyFormat($inventoryAverageUnitPrice) ?></strong>
+                    </article>
+                </div>
+
                 <?php if ($importFeedback): ?>
                     <section class="import-feedback <?= e($importFeedback['type']) ?>">
                         <i class="fa-solid <?= $importFeedback['type'] === 'success' ? 'fa-circle-check' : ($importFeedback['type'] === 'warning' ? 'fa-triangle-exclamation' : 'fa-circle-xmark') ?>"></i>
@@ -3195,8 +3242,8 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                     </section>
                 <?php endif; ?>
 
-                <div class="data-table-container">
-                    <div class="table-header">
+                <div class="data-table-container inventory-table-container">
+                    <div class="table-header inventory-table-header">
                         <div class="search-box">
                             <i class="fa-solid fa-search"></i>
                             <input type="text" id="productSearch" placeholder="Search products..." onkeyup="filterTable('productTable', this.value)">
@@ -3207,6 +3254,29 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                 <option value="low">Low Stock Only</option>
                                 <option value="ok">In Stock</option>
                             </select>
+                            <?php
+                                $inventoryCategories = [];
+                                foreach ($products as $inventoryProduct) {
+                                    $inventoryCategoryName = trim((string) ($inventoryProduct['category'] ?? ''));
+                                    if ($inventoryCategoryName === '') {
+                                        continue;
+                                    }
+                                    $inventoryCategoryKey = strtolower($inventoryCategoryName);
+                                    if (!isset($inventoryCategories[$inventoryCategoryKey])) {
+                                        $inventoryCategories[$inventoryCategoryKey] = $inventoryCategoryName;
+                                    }
+                                }
+                                ksort($inventoryCategories);
+                            ?>
+                            <select onchange="filterByCategory(this.value)">
+                                <option value="all">All Categories</option>
+                                <?php foreach ($inventoryCategories as $inventoryCategoryKey => $inventoryCategoryName): ?>
+                                    <option value="<?= e($inventoryCategoryKey) ?>"><?= e($inventoryCategoryName) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="inventory-visible-indicator">
+                            Showing <strong id="inventoryVisibleCount"><?= moneyFormat($inventoryProductCount) ?></strong>
                         </div>
                     </div>
                     <table class="data-table" id="productTable">
@@ -3224,7 +3294,11 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                         </thead>
                         <tbody>
                             <?php foreach ($products as $product): ?>
-                                <tr data-stock="<?= $product['stock_qty'] <= $product['reorder_level'] ? 'low' : 'ok' ?>">
+                                <?php $inventoryCategory = trim((string) ($product['category'] ?? '')); ?>
+                                <tr
+                                    data-stock="<?= $product['stock_qty'] <= $product['reorder_level'] ? 'low' : 'ok' ?>"
+                                    data-category="<?= e(strtolower($inventoryCategory !== '' ? $inventoryCategory : 'uncategorized')) ?>"
+                                >
                                     <td><strong><?= e($product['name']) ?></strong></td>
                                     <td><code><?= e($product['sku']) ?></code></td>
                                     <td><?= e((string) ($product['category'] ?? '-')) ?></td>
@@ -3250,6 +3324,10 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                             <?php endforeach; ?>
                         </tbody>
                     </table>
+                    <div class="inventory-empty-state" id="inventoryNoResult" style="display:none;">
+                        <i class="fa-regular fa-folder-open"></i>
+                        <span>No products match your current filters.</span>
+                    </div>
                 </div>
             </section>
 
@@ -3451,13 +3529,41 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                 <section class="page-content sales-pos-shell">
                     <div class="sales-layout">
                         <div class="sales-products-panel">
+                            <div class="sales-products-header">
+                                <div>
+                                    <h3>Point of Sale</h3>
+                                    <p>Fast checkout with full product visibility</p>
+                                </div>
+                                <div class="sales-products-stats">
+                                    <span><i class="fa-solid fa-boxes-stacked"></i> <?= moneyFormat(count($saleProductOptions)) ?> Products</span>
+                                    <span><i class="fa-solid fa-circle-check"></i> <strong id="salesVisibleCount"><?= moneyFormat(count($saleProductOptions)) ?></strong> Visible</span>
+                                </div>
+                            </div>
+
                             <div class="sales-search-wrap">
                                 <i class="fa-solid fa-magnifying-glass"></i>
                                 <input type="text" id="salesProductSearch" placeholder="Search products or scan barcode...">
                             </div>
 
                             <div class="sales-category-row">
-                                <button type="button" class="sales-chip active">All</button>
+                                <button type="button" class="sales-chip active" data-category="all">All Products</button>
+                                <?php
+                                    $salesCategoryOptions = [];
+                                    foreach ($saleProductOptions as $product) {
+                                        $categoryName = trim((string) ($product['category'] ?? ''));
+                                        if ($categoryName === '') {
+                                            continue;
+                                        }
+                                        $categoryKey = strtolower($categoryName);
+                                        if (!isset($salesCategoryOptions[$categoryKey])) {
+                                            $salesCategoryOptions[$categoryKey] = $categoryName;
+                                        }
+                                    }
+                                    ksort($salesCategoryOptions);
+                                ?>
+                                <?php foreach ($salesCategoryOptions as $categoryKey => $categoryName): ?>
+                                    <button type="button" class="sales-chip" data-category="<?= e($categoryKey) ?>"><?= e($categoryName) ?></button>
+                                <?php endforeach; ?>
                             </div>
 
                             <div class="sales-products-grid" id="salesProductsGrid">
@@ -3468,6 +3574,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                         $stockQty = (int) ($product['stock_qty'] ?? 0);
                                         $category = trim((string) ($product['category'] ?? ''));
                                         $searchBlob = strtolower($productName . ' ' . $category);
+                                        $categoryKey = strtolower($category);
                                     ?>
                                     <button
                                         type="button"
@@ -3477,13 +3584,21 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                         data-product-price="<?= (float) ($product['unit_price'] ?? 0) ?>"
                                         data-product-stock="<?= $stockQty ?>"
                                         data-product-search="<?= e($searchBlob) ?>"
+                                        data-product-category="<?= e($categoryKey !== '' ? $categoryKey : 'uncategorized') ?>"
                                     >
                                         <span class="sales-product-icon"><?= e($firstLetter !== '' ? $firstLetter : 'P') ?></span>
                                         <strong><?= e($productName) ?></strong>
+                                        <div class="sales-product-meta">
+                                            <span class="sales-product-category"><?= e($category !== '' ? $category : 'General') ?></span>
+                                            <span class="sales-product-stock <?= $stockQty > 0 ? 'in-stock' : 'out-stock' ?>"><?= $stockQty ?> in stock</span>
+                                        </div>
                                         <span class="sales-product-price">Tsh <?= moneyFormat((float) ($product['unit_price'] ?? 0)) ?></span>
-                                        <span class="sales-product-stock"><?= $stockQty ?> in stock</span>
                                     </button>
                                 <?php endforeach; ?>
+                            </div>
+
+                            <div class="sales-no-result" id="salesNoResult" style="display:none;">
+                                <i class="fa-regular fa-folder-open"></i> No matching products found.
                             </div>
                         </div>
 

@@ -3853,6 +3853,7 @@ const TABLE_FILTER_STATE = {
   productTable: {
     search: "",
     stock: "all",
+    category: "all",
   },
   salesTable: {
     search: "",
@@ -3909,15 +3910,34 @@ function applyProductTableFilters() {
   const state = TABLE_FILTER_STATE.productTable;
   const searchTerm = (state.search || "").toLowerCase();
   const stockFilter = (state.stock || "all").toLowerCase();
+  const categoryFilter = (state.category || "all").toLowerCase();
+  const visibleCountEl = document.getElementById("inventoryVisibleCount");
+  const noResultEl = document.getElementById("inventoryNoResult");
+  let visibleCount = 0;
 
   rows.forEach((row) => {
     const text = (row.textContent || "").toLowerCase();
     const stockStatus = (row.dataset.stock || "").toLowerCase();
+    const category = (row.dataset.category || "").toLowerCase();
     const matchesSearch = searchTerm === "" || text.includes(searchTerm);
     const matchesStock = stockFilter === "all" || stockStatus === stockFilter;
+    const matchesCategory =
+      categoryFilter === "all" || category === categoryFilter;
 
-    row.style.display = matchesSearch && matchesStock ? "" : "none";
+    const shouldShow = matchesSearch && matchesStock && matchesCategory;
+    row.style.display = shouldShow ? "" : "none";
+    if (shouldShow) {
+      visibleCount += 1;
+    }
   });
+
+  if (visibleCountEl) {
+    visibleCountEl.textContent = visibleCount.toLocaleString("en-US");
+  }
+
+  if (noResultEl) {
+    noResultEl.style.display = visibleCount === 0 ? "flex" : "none";
+  }
 }
 
 function applySalesTableFilters() {
@@ -3989,6 +4009,9 @@ function initSalesPage() {
 
   const productsGrid = document.getElementById("salesProductsGrid");
   const searchInput = document.getElementById("salesProductSearch");
+  const categoryRow = document.querySelector(".sales-category-row");
+  const visibleCountEl = document.getElementById("salesVisibleCount");
+  const noResultEl = document.getElementById("salesNoResult");
   const cartItemsEl = document.getElementById("salesCartItems");
   const subtotalEl = document.getElementById("salesSubtotal");
   const taxEl = document.getElementById("salesTax");
@@ -4185,20 +4208,20 @@ function initSalesPage() {
                     <head>
                         <title>Receipt ${displayReceiptNo}</title>
                         <style>
-                            body{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; padding:16px; color:#111;}
-                            .sales-receipt-sheet{max-width:360px; margin:0 auto;}
-                            .sales-receipt-brand{text-align:center; font-size:32px; font-weight:800; margin-bottom:4px;}
-                            .sales-receipt-subtitle,.sales-receipt-time{text-align:center; color:#555; font-size:12px;}
-                            .sales-receipt-meta{margin-top:14px; border-top:1px dashed #bbb; border-bottom:1px dashed #bbb; padding:10px 0;}
-                            .sales-receipt-totals{margin-top:14px; border-top:1px dashed #bbb; padding-top:10px;}
-                            .sales-receipt-meta div,.sales-receipt-line,.sales-receipt-totals div{display:flex; justify-content:space-between; margin-bottom:8px; font-size:13px;}
-                            .sales-receipt-items{margin-top:10px;}
-                            .sales-receipt-line{align-items:flex-start; border-bottom:1px dashed #ddd; padding:6px 0; margin-bottom:0;}
-                            .sales-receipt-line:last-child{border-bottom:none;}
-                            .sales-receipt-line-main{display:flex; flex-direction:column; gap:2px;}
-                            .sales-receipt-line-main small{color:#666; font-size:11px;}
-                            .sales-receipt-total{font-weight:800; font-size:18px;}
-                            .sales-receipt-thanks{text-align:center; margin-top:14px; font-size:12px;}
+                  body{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; padding:16px; color:#111827; background:#f5f7fb;}
+                  .sales-receipt-sheet{max-width:360px; margin:0 auto; border:1px solid #cfd8e6; border-radius:10px; padding:12px 11px; background:linear-gradient(180deg, #ffffff 0%, #f8faff 100%);}
+                  .sales-receipt-brand{text-align:center; font-size:28px; font-weight:800; margin-bottom:4px; color:#1f2f47;}
+                  .sales-receipt-subtitle,.sales-receipt-time{text-align:center; color:#5f6f86; font-size:12px;}
+                  .sales-receipt-meta{margin-top:12px; border-top:1px dashed #bcc8db; border-bottom:1px dashed #bcc8db; padding:8px 0;}
+                  .sales-receipt-totals{margin-top:12px; border-top:1px dashed #bcc8db; padding-top:8px;}
+                  .sales-receipt-meta div,.sales-receipt-line,.sales-receipt-totals div{display:flex; justify-content:space-between; margin-bottom:7px; font-size:12px; align-items:center;}
+                  .sales-receipt-items{margin-top:10px;}
+                  .sales-receipt-line{align-items:flex-start; border-bottom:1px dashed #c5d0e1; padding:6px 0; margin-bottom:0;}
+                  .sales-receipt-line:last-child{border-bottom:none;}
+                  .sales-receipt-line-main{display:flex; flex-direction:column; gap:2px;}
+                  .sales-receipt-line-main small{color:#68778f; font-size:11px;}
+                  .sales-receipt-total{font-weight:800; font-size:16px; color:#3730a3;}
+                  .sales-receipt-thanks{text-align:center; margin-top:12px; font-size:12px; color:#5f6f86;}
                         </style>
                     </head>
                     <body>${sheet.outerHTML}</body>
@@ -4498,6 +4521,51 @@ function initSalesPage() {
     price: toNumber(card.getAttribute("data-product-price")),
   });
 
+  const updateVisibleProductMeta = () => {
+    const cards = productsGrid.querySelectorAll(".sales-product-card");
+    let visibleCount = 0;
+
+    cards.forEach((card) => {
+      if (card.style.display !== "none") {
+        visibleCount += 1;
+      }
+    });
+
+    if (visibleCountEl) {
+      visibleCountEl.textContent = visibleCount.toLocaleString("en-US");
+    }
+
+    if (noResultEl) {
+      noResultEl.style.display = visibleCount === 0 ? "block" : "none";
+    }
+  };
+
+  const applySalesProductFilters = () => {
+    const term = (searchInput?.value || "").toLowerCase().trim();
+    const activeCategoryChip = categoryRow?.querySelector(".sales-chip.active");
+    const activeCategory = (
+      activeCategoryChip?.getAttribute("data-category") || "all"
+    )
+      .toLowerCase()
+      .trim();
+
+    productsGrid.querySelectorAll(".sales-product-card").forEach((card) => {
+      const blob = (card.getAttribute("data-product-search") || "")
+        .toLowerCase()
+        .trim();
+      const category = (card.getAttribute("data-product-category") || "")
+        .toLowerCase()
+        .trim();
+
+      const searchMatch = term === "" || blob.includes(term);
+      const categoryMatch =
+        activeCategory === "all" || category === activeCategory;
+      card.style.display = searchMatch && categoryMatch ? "" : "none";
+    });
+
+    updateVisibleProductMeta();
+  };
+
   const renderCart = () => {
     if (cart.size === 0) {
       cartItemsEl.innerHTML =
@@ -4592,16 +4660,19 @@ function initSalesPage() {
     renderCart();
   });
 
-  searchInput?.addEventListener("input", function () {
-    const term = (searchInput.value || "").toLowerCase().trim();
-    const cards = productsGrid.querySelectorAll(".sales-product-card");
+  searchInput?.addEventListener("input", applySalesProductFilters);
 
-    cards.forEach((card) => {
-      const blob = (
-        card.getAttribute("data-product-search") || ""
-      ).toLowerCase();
-      card.style.display = term === "" || blob.includes(term) ? "" : "none";
+  categoryRow?.addEventListener("click", (event) => {
+    const chip = event.target.closest(".sales-chip");
+    if (!chip) {
+      return;
+    }
+
+    categoryRow.querySelectorAll(".sales-chip").forEach((node) => {
+      node.classList.remove("active");
     });
+    chip.classList.add("active");
+    applySalesProductFilters();
   });
 
   clearBtn.addEventListener("click", function () {
@@ -4612,6 +4683,7 @@ function initSalesPage() {
   chargeBtn.addEventListener("click", openCheckoutModal);
 
   renderCart();
+  applySalesProductFilters();
 
   if (APP_CONFIG.flashReceipt && typeof APP_CONFIG.flashReceipt === "object") {
     openReceiptModal(APP_CONFIG.flashReceipt);
@@ -4650,8 +4722,16 @@ function filterByStock(value) {
   applyProductTableFilters();
 }
 
+function filterByCategory(value) {
+  TABLE_FILTER_STATE.productTable.category = (value || "all")
+    .toString()
+    .toLowerCase();
+  applyProductTableFilters();
+}
+
 window.filterTable = filterTable;
 window.filterByStock = filterByStock;
+window.filterByCategory = filterByCategory;
 window.filterByPayment = filterByPayment;
 
 function filterByPayment(tableId, value) {
