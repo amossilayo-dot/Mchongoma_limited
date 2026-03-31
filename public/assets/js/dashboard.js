@@ -3735,11 +3735,26 @@ function showEndOfDayReport() {
         </style>
     `;
   openModal("End of Day Summary", content, [
-    { text: "Print Report", class: "btn-secondary", onclick: "printReport()" },
+    {
+      text: "Print Report",
+      class: "btn-secondary",
+      handler: function () {
+        printEndOfDaySummary({
+          dateLabel: dateStr,
+          totalSales,
+          transactions,
+          cash,
+          mobileMoney,
+        });
+      },
+    },
     {
       text: "Close Day",
       class: "btn-primary",
-      onclick: 'closeModal(); showToast("success", "Day closed successfully!")',
+      handler: function () {
+        closeModal();
+        showToast("success", "Day closed successfully!");
+      },
     },
   ]);
 }
@@ -6077,13 +6092,110 @@ function printReceipt(transactionNo) {
   showToast("success", "Printing receipt...");
 }
 
-function printReport() {
-  window.open("export_report_pdf.php?type=daily", "_blank", "noopener");
-  showToast("success", "Exporting Daily Report PDF...");
+function printEndOfDaySummary(summary) {
+  const dateLabel = String(summary?.dateLabel || "");
+  const totalSales = Number.parseFloat(summary?.totalSales || 0) || 0;
+  const transactions = Number.parseInt(summary?.transactions || 0, 10) || 0;
+  const cash = Number.parseFloat(summary?.cash || 0) || 0;
+  const mobileMoney = Number.parseFloat(summary?.mobileMoney || 0) || 0;
+
+  const printWindow = window.open("", "_blank", "width=900,height=700");
+  if (!printWindow) {
+    showToast("error", "Popup blocked. Please allow popups and try again.");
+    return;
+  }
+
+  try {
+    printWindow.opener = null;
+  } catch (error) {
+    // Ignore if browser blocks mutating opener.
+  }
+
+  const printableHtml = `
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <title>End of Day Report</title>
+        <style>
+          body { font-family: Arial, sans-serif; color: #111827; margin: 24px; }
+          h1 { margin: 0 0 6px 0; font-size: 22px; }
+          .date { margin: 0 0 18px 0; color: #6B7280; }
+          .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+          .card { border: 1px solid #D1D5DB; border-radius: 8px; padding: 12px; }
+          .label { color: #6B7280; font-size: 12px; margin: 0 0 6px 0; }
+          .value { font-size: 22px; font-weight: 700; margin: 0; }
+          @media print { body { margin: 12mm; } }
+        </style>
+      </head>
+      <body>
+        <h1>End of Day Report</h1>
+        <p class="date">${escapeHtml(dateLabel)}</p>
+        <div class="grid">
+          <div class="card">
+            <p class="label">Total Sales</p>
+            <p class="value">Tsh ${formatMoney(totalSales)}</p>
+          </div>
+          <div class="card">
+            <p class="label">Transactions</p>
+            <p class="value">${transactions}</p>
+          </div>
+          <div class="card">
+            <p class="label">Cash</p>
+            <p class="value">Tsh ${formatMoney(cash)}</p>
+          </div>
+          <div class="card">
+            <p class="label">Mobile Money</p>
+            <p class="value">Tsh ${formatMoney(mobileMoney)}</p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  printWindow.document.open();
+  printWindow.document.write(printableHtml);
+  printWindow.document.close();
+
+  let didPrint = false;
+  const triggerPrint = function () {
+    if (didPrint || printWindow.closed) {
+      return;
+    }
+    didPrint = true;
+    printWindow.focus();
+    printWindow.print();
+  };
+
+  printWindow.addEventListener("load", function () {
+    setTimeout(triggerPrint, 100);
+  });
+
+  // Fallback for browsers that do not fire load reliably after document.write.
+  setTimeout(triggerPrint, 400);
+
+  showToast("success", "Printing report...");
 }
 
-function generateReport(type) {
-  const names = {
+function printReport() {
+  const rawRange =
+    new URLSearchParams(window.location.search).get("range") || "month";
+  const rangeAlias = {
+    today: "day",
+    day: "day",
+    week: "week",
+    month: "month",
+    year: "year",
+    all: "all",
+  };
+  const range = rangeAlias[rawRange] || "month";
+  const url = `export_report_pdf.php?range=${encodeURIComponent(range)}&disposition=inline`;
+  window.open(url, "_blank", "noopener");
+  showToast("success", "Opening report for print...");
+}
+
+function generateReport(value) {
+  const typeNames = {
     daily: "Daily Sales",
     weekly: "Weekly Sales",
     monthly: "Monthly Sales",
@@ -6091,21 +6203,56 @@ function generateReport(type) {
     customers: "Customer",
     profit: "Profit & Loss",
   };
-  if (!names[type]) {
+  const rangeNames = {
+    day: "Today",
+    today: "Today",
+    week: "This Week",
+    month: "This Month",
+    year: "This Year",
+    all: "All Time",
+  };
+
+  if (rangeNames[value]) {
+    const rangeAlias = {
+      today: "day",
+      day: "day",
+      week: "week",
+      month: "month",
+      year: "year",
+      all: "all",
+    };
+    const exportRange = rangeAlias[value] || "month";
+    window.open(
+      `export_report_pdf.php?range=${encodeURIComponent(exportRange)}`,
+      "_blank",
+      "noopener",
+    );
+    if (getCurrentLanguage() === "sw") {
+      showToast(
+        "success",
+        "Inahamisha ripoti kulingana na kipindi kilichochaguliwa...",
+      );
+    } else {
+      showToast("success", `Exporting ${rangeNames[value]} report PDF...`);
+    }
+    return;
+  }
+
+  if (!typeNames[value]) {
     showToast("error", "Invalid report type");
     return;
   }
 
   window.open(
-    `export_report_pdf.php?type=${encodeURIComponent(type)}`,
+    `export_report_pdf.php?type=${encodeURIComponent(value)}`,
     "_blank",
     "noopener",
   );
   if (getCurrentLanguage() === "sw") {
-    const localized = translateValue(names[type], "sw");
+    const localized = translateValue(typeNames[value], "sw");
     showToast("success", `Inahamisha PDF ya Ripoti ya ${localized}...`);
   } else {
-    showToast("success", `Exporting ${names[type]} Report PDF...`);
+    showToast("success", `Exporting ${typeNames[value]} Report PDF...`);
   }
 }
 

@@ -424,6 +424,15 @@ $reportRangeButtons = [
     'all' => 'All Time',
 ];
 
+$reportRangeToExport = [
+    'today' => 'day',
+    'week' => 'week',
+    'month' => 'month',
+    'year' => 'year',
+    'all' => 'all',
+];
+$reportExportRange = $reportRangeToExport[$reportRange] ?? 'month';
+
 $todayStart = new DateTimeImmutable('today');
 $rangeStart = match ($reportRange) {
     'today' => $todayStart,
@@ -3604,13 +3613,13 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                 ><?= e($rangeLabel) ?></a>
                             <?php endforeach; ?>
                         </div>
-                        <a class="btn btn-secondary" href="export_report_pdf.php?type=daily" target="_blank" rel="noopener">
+                        <a class="btn btn-secondary" href="export_report_pdf.php?range=<?= e($reportExportRange) ?>&amp;disposition=inline" target="_blank" rel="noopener">
                             <i class="fa-solid fa-print"></i> Print Report
                         </a>
-                        <button class="btn btn-secondary" type="button" data-action="generateReport" data-value="daily">
+                        <button class="btn btn-secondary" type="button" data-action="generateReport" data-value="<?= e($reportExportRange) ?>">
                             <i class="fa-solid fa-download"></i> Export CSV
                         </button>
-                        <button class="btn btn-secondary" type="button" data-action="generateReport" data-value="monthly">
+                        <button class="btn btn-secondary" type="button" data-action="generateReport" data-value="<?= e($reportExportRange) ?>">
                             <i class="fa-regular fa-file-excel"></i> Export Excel
                         </button>
                     </div>
