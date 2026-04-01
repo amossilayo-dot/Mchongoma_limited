@@ -1071,6 +1071,11 @@ function initActionBindings() {
       return;
     }
 
+    if (action === "viewCustomerDebtPayments") {
+      viewCustomerDebtPayments(parseInt(value, 10));
+      return;
+    }
+
     if (action === "viewReceipt") {
       viewReceipt(value);
       return;
@@ -4166,6 +4171,7 @@ function initTableFilters() {
 function initCustomerDebtFilters() {
   const filterEl = document.getElementById("customerDebtStatusFilter");
   const table = document.getElementById("customerDebtTable");
+  const noResultEl = document.getElementById("customerDebtNoResult");
   if (!filterEl || !table) {
     return;
   }
@@ -4173,6 +4179,7 @@ function initCustomerDebtFilters() {
   const applyFilter = () => {
     const selected = (filterEl.value || "all").toLowerCase();
     const rows = table.querySelectorAll("tbody tr");
+    let visibleCount = 0;
 
     rows.forEach((row) => {
       const status = (
@@ -4180,20 +4187,37 @@ function initCustomerDebtFilters() {
       ).toLowerCase();
 
       if (!status) {
-        row.style.display = selected === "all" ? "" : "none";
+        const show = selected === "all";
+        row.style.display = show ? "" : "none";
+        if (show) {
+          visibleCount += 1;
+        }
         return;
       }
 
       if (selected === "all") {
         row.style.display = "";
+        visibleCount += 1;
         return;
       }
 
-      row.style.display = status === selected ? "" : "none";
+      const matchesOpenFilter =
+        selected === "open" && (status === "open" || status === "partial");
+      const matchesDirect = status === selected;
+      const show = matchesOpenFilter || matchesDirect;
+      row.style.display = show ? "" : "none";
+      if (show) {
+        visibleCount += 1;
+      }
     });
+
+    if (noResultEl) {
+      noResultEl.style.display = visibleCount === 0 ? "flex" : "none";
+    }
   };
 
   filterEl.addEventListener("change", applyFilter);
+  filterEl.addEventListener("input", applyFilter);
   applyFilter();
 }
 
@@ -5944,6 +5968,108 @@ function receiveCustomerPayment(id) {
 
   creditSelect?.addEventListener("change", syncOutstanding);
   syncOutstanding();
+}
+
+function viewCustomerDebtPayments(id) {
+  const creditId = Number.parseInt(id, 10);
+  if (!Number.isFinite(creditId) || creditId <= 0) {
+    showToast("error", "Invalid credit ID");
+    return;
+  }
+
+  const credits = Array.isArray(APP_CONFIG.customerCredits)
+    ? APP_CONFIG.customerCredits
+    : [];
+  const payments = Array.isArray(APP_CONFIG.customerCreditPayments)
+    ? APP_CONFIG.customerCreditPayments
+    : [];
+
+  const credit = credits.find(
+    (item) => Number.parseInt(String(item.id || "0"), 10) === creditId,
+  );
+  if (!credit) {
+    showToast("error", "Credit record not found");
+    return;
+  }
+
+  const creditPayments = payments
+    .filter(
+      (item) => Number.parseInt(String(item.credit_id || "0"), 10) === creditId,
+    )
+    .sort((a, b) => {
+      const aTs = Date.parse(String(a.created_at || "")) || 0;
+      const bTs = Date.parse(String(b.created_at || "")) || 0;
+      return bTs - aTs;
+    });
+
+  const transactionNo = escapeHtml(
+    String(credit.transaction_no || `SALE-${credit.sale_id || credit.id}`),
+  );
+  const customerName = escapeHtml(String(credit.customer_name || "Customer"));
+  const total = formatMoney(
+    Number.parseFloat(String(credit.total_amount || 0)),
+  );
+  const paid = formatMoney(Number.parseFloat(String(credit.paid_amount || 0)));
+  const outstanding = formatMoney(
+    Number.parseFloat(String(credit.outstanding_amount || 0)),
+  );
+
+  const rowsHtml =
+    creditPayments.length === 0
+      ? '<tr><td colspan="4" style="text-align:center; color:#6b7280;">No payment records yet for this debt.</td></tr>'
+      : creditPayments
+          .map((payment) => {
+            const amount = formatMoney(
+              Number.parseFloat(String(payment.amount || 0)),
+            );
+            const method = escapeHtml(String(payment.payment_method || "Cash"));
+            const reference = escapeHtml(String(payment.reference || "-"));
+            const createdAtRaw = String(payment.created_at || "");
+            const createdAtDate = createdAtRaw
+              ? new Date(createdAtRaw.replace(" ", "T"))
+              : null;
+            const createdAt =
+              createdAtDate && !Number.isNaN(createdAtDate.getTime())
+                ? escapeHtml(createdAtDate.toLocaleString())
+                : escapeHtml(createdAtRaw || "-");
+
+            return `
+              <tr>
+                <td><strong>Tsh ${escapeHtml(amount)}</strong></td>
+                <td>${method}</td>
+                <td>${reference}</td>
+                <td>${createdAt}</td>
+              </tr>
+            `;
+          })
+          .join("");
+
+  const content = `
+    <div style="display:grid; gap:10px;">
+      <div><strong>Customer:</strong> ${customerName}</div>
+      <div><strong>Sale Ref:</strong> <code>${transactionNo}</code></div>
+      <div><strong>Total:</strong> Tsh ${escapeHtml(total)} | <strong>Paid:</strong> Tsh ${escapeHtml(paid)} | <strong>Outstanding:</strong> Tsh ${escapeHtml(outstanding)}</div>
+      <div style="overflow:auto; margin-top:4px;">
+        <table class="data-table" style="min-width:620px;">
+          <thead>
+            <tr>
+              <th>Amount</th>
+              <th>Method</th>
+              <th>Reference</th>
+              <th>Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  openModal("Debt Payment History", content, [
+    { text: "Close", class: "btn-primary", onclick: "closeModal()" },
+  ]);
 }
 
 function deleteCustomer(id) {

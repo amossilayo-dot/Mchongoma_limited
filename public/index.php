@@ -163,6 +163,7 @@ $configuredLocations = [];
 $mobileMoneyTransactions = [];
 $customerCredits = [];
 $customerOutstandingTotals = [];
+$customerCreditPayments = [];
 $securityAuditLogs = [];
 $securityLogsStatusFilter = strtolower(trim((string) ($_GET['status'] ?? 'all')));
 if (!in_array($securityLogsStatusFilter, ['all', 'success', 'failed', 'blocked', 'denied', 'error'], true)) {
@@ -412,8 +413,14 @@ try {
         $mobileMoneyTransactions = $mobileMoneyRepo->getRecentTransactions(50);
     }
     if ($currentPage === 'customers') {
-        $customerCredits = $customerCreditRepo->getCredits(300, true);
+        $customerCredits = $customerCreditRepo->getCredits(300, false);
         $customerOutstandingTotals = $customerCreditRepo->getCustomerOutstandingTotals();
+
+        $creditIds = array_map(
+            static fn(array $item): int => (int) ($item['id'] ?? 0),
+            $customerCredits
+        );
+        $customerCreditPayments = $customerCreditRepo->getPaymentsByCreditIds($creditIds, 1500);
     }
     $storeSettings = getStoreSettings($pdo, $storeSettings);
 
@@ -3813,12 +3820,19 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                             <?php else: ?>
                                                 <span class="status-badge success">Paid</span>
                                             <?php endif; ?>
+                                            <button class="btn-icon" data-action="viewCustomerDebtPayments" data-value="<?= (int) ($credit['id'] ?? 0) ?>" title="View Payments">
+                                                <i class="fa-solid fa-clock-rotate-left"></i>
+                                            </button>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php endif; ?>
                         </tbody>
                     </table>
+                    <div id="customerDebtNoResult" class="inventory-empty-state" style="display:none; margin-top:10px;">
+                        <i class="fa-regular fa-folder-open"></i>
+                        <span>No debt records match this filter.</span>
+                    </div>
                 </div>
             </section>
 
@@ -5841,6 +5855,16 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
         'due_date' => (string) ($item['due_date'] ?? ''),
         'created_at' => (string) ($item['created_at'] ?? ''),
     ], $customerCredits),
+    'customerCreditPayments' => array_map(static fn(array $item) => [
+        'id' => (int) ($item['id'] ?? 0),
+        'credit_id' => (int) ($item['credit_id'] ?? 0),
+        'customer_id' => (int) ($item['customer_id'] ?? 0),
+        'transaction_no' => (string) ($item['transaction_no'] ?? ''),
+        'amount' => (float) ($item['amount'] ?? 0),
+        'payment_method' => (string) ($item['payment_method'] ?? 'Cash'),
+        'reference' => (string) ($item['reference'] ?? ''),
+        'created_at' => (string) ($item['created_at'] ?? ''),
+    ], $customerCreditPayments),
 ], JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
 <script src="assets/js/dashboard.js?v=<?= urlencode((string) @filemtime(__DIR__ . '/assets/js/dashboard.js')) ?>"></script>
 </body>

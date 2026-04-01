@@ -159,6 +159,42 @@ final class CustomerCreditRepository
         return $map;
     }
 
+    public function getPaymentsByCreditIds(array $creditIds, int $limit = 1000): array
+    {
+        $normalizedIds = [];
+        foreach ($creditIds as $creditId) {
+            $id = (int) $creditId;
+            if ($id > 0) {
+                $normalizedIds[$id] = true;
+            }
+        }
+
+        $ids = array_keys($normalizedIds);
+        if (count($ids) === 0) {
+            return [];
+        }
+
+        $limit = max(1, min($limit, 5000));
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $sql = 'SELECT p.id, p.credit_id, p.customer_id, p.amount, p.payment_method, p.reference, p.created_at,
+                       cc.sale_id,
+                       s.transaction_no
+                FROM customer_credit_payments p
+                JOIN customer_credits cc ON cc.id = p.credit_id
+                LEFT JOIN sales s ON s.id = cc.sale_id
+                WHERE p.credit_id IN (' . $placeholders . ')
+                ORDER BY p.created_at DESC
+                LIMIT ' . $limit;
+
+        $stmt = $this->pdo->prepare($sql);
+        foreach ($ids as $index => $id) {
+            $stmt->bindValue($index + 1, $id, PDO::PARAM_INT);
+        }
+        $stmt->execute();
+
+        return $stmt->fetchAll();
+    }
+
     public function recordPayment(int $creditId, float $amount, string $paymentMethod, string $reference = ''): array
     {
         if ($creditId <= 0) {
