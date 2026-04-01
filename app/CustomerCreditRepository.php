@@ -89,6 +89,97 @@ final class CustomerCreditRepository
         return $stmt->fetchAll();
     }
 
+    public function getCreditsPage(int $limit = 200, int $offset = 0, string $query = ''): array
+    {
+        $limit = max(1, min($limit, 2000));
+        $offset = max(0, $offset);
+        $normalized = trim($query);
+        $isNumericSearch = $normalized !== '' && ctype_digit($normalized);
+
+        $sql = 'SELECT cc.id, cc.sale_id, cc.customer_id, cc.total_amount, cc.paid_amount,
+                       cc.outstanding_amount, cc.status, cc.due_date, cc.notes, cc.created_at, cc.updated_at,
+                       c.name AS customer_name,
+                       s.transaction_no
+                FROM customer_credits cc
+                JOIN customers c ON c.id = cc.customer_id
+                LEFT JOIN sales s ON s.id = cc.sale_id';
+
+        if ($normalized !== '') {
+            $sql .= ' WHERE (
+                        c.name LIKE :search
+                        OR COALESCE(c.phone, "") LIKE :search
+                        OR COALESCE(s.transaction_no, "") LIKE :search
+                        OR CAST(cc.sale_id AS CHAR) LIKE :search
+                        OR CAST(cc.id AS CHAR) LIKE :search
+                        OR DATE_FORMAT(cc.created_at, "%Y-%m-%d") LIKE :search';
+            if ($isNumericSearch) {
+                $sql .= ' OR cc.customer_id = :numeric_id';
+            }
+            $sql .= ')';
+        }
+
+        $sql .= ' ORDER BY cc.created_at DESC LIMIT :limit OFFSET :offset';
+
+        $stmt = $this->pdo->prepare($sql);
+        if ($normalized !== '') {
+            $stmt->bindValue(':search', '%' . $normalized . '%', PDO::PARAM_STR);
+            if ($isNumericSearch) {
+                $stmt->bindValue(':numeric_id', (int) $normalized, PDO::PARAM_INT);
+            }
+        }
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+        $stmt->execute();
+
+        return $stmt->fetchAll();
+    }
+
+    public function countCredits(string $query = ''): int
+    {
+        $normalized = trim($query);
+        $isNumericSearch = $normalized !== '' && ctype_digit($normalized);
+
+        $sql = 'SELECT COUNT(*) AS total
+                FROM customer_credits cc
+                JOIN customers c ON c.id = cc.customer_id
+                LEFT JOIN sales s ON s.id = cc.sale_id';
+
+        if ($normalized !== '') {
+            $sql .= ' WHERE (
+                        c.name LIKE :search
+                        OR COALESCE(c.phone, "") LIKE :search
+                        OR COALESCE(s.transaction_no, "") LIKE :search
+                        OR CAST(cc.sale_id AS CHAR) LIKE :search
+                        OR CAST(cc.id AS CHAR) LIKE :search
+                        OR DATE_FORMAT(cc.created_at, "%Y-%m-%d") LIKE :search';
+            if ($isNumericSearch) {
+                $sql .= ' OR cc.customer_id = :numeric_id';
+            }
+            $sql .= ')';
+        }
+
+        $stmt = $this->pdo->prepare($sql);
+        if ($normalized !== '') {
+            $stmt->bindValue(':search', '%' . $normalized . '%', PDO::PARAM_STR);
+            if ($isNumericSearch) {
+                $stmt->bindValue(':numeric_id', (int) $normalized, PDO::PARAM_INT);
+            }
+        }
+        $stmt->execute();
+
+        return (int) ($stmt->fetch()['total'] ?? 0);
+    }
+
+    public function searchCredits(string $query, int $limit = 500): array
+    {
+        $normalized = trim($query);
+        if ($normalized === '') {
+            return $this->getCredits($limit, false);
+        }
+
+        return $this->getCreditsPage($limit, 0, $normalized);
+    }
+
     public function getCustomerCredits(int $customerId, int $limit = 200, bool $openOnly = false): array
     {
         if ($customerId <= 0) {
@@ -184,6 +275,40 @@ final class CustomerCreditRepository
                 LEFT JOIN sales s ON s.id = cc.sale_id
                 WHERE p.credit_id IN (' . $placeholders . ')
                 ORDER BY p.created_at DESC
+                LIMIT ' . $limit;
+
+        $stmt = $this->pdo->prepare($sql);
+        foreach ($ids as $index => $id) {
+            $stmt->bindValue($index + 1, $id, PDO::PARAM_INT);
+        }
+        $stmt->execute();
+
+        return $stmt->fetchAll();
+    }
+
+    public function getSaleItemsBySaleIds(array $saleIds, int $limit = 3000): array
+    {
+        $normalizedIds = [];
+        foreach ($saleIds as $saleId) {
+            $id = (int) $saleId;
+            if ($id > 0) {
+                $normalizedIds[$id] = true;
+            }
+        }
+
+        $ids = array_keys($normalizedIds);
+        if (count($ids) === 0) {
+            return [];
+        }
+
+        $limit = max(1, min($limit, 10000));
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $sql = 'SELECT si.id, si.sale_id, si.product_id, si.quantity, si.unit_price, si.line_total,
+                   si.note, si.created_at, p.name AS product_name
+                FROM sale_items si
+                LEFT JOIN products p ON p.id = si.product_id
+                WHERE si.sale_id IN (' . $placeholders . ')
+                ORDER BY si.sale_id DESC, si.id ASC
                 LIMIT ' . $limit;
 
         $stmt = $this->pdo->prepare($sql);

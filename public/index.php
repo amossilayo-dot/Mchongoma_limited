@@ -164,12 +164,20 @@ $mobileMoneyTransactions = [];
 $customerCredits = [];
 $customerOutstandingTotals = [];
 $customerCreditPayments = [];
+$customerCreditSaleItems = [];
+$debtAddProductOptions = [];
 $securityAuditLogs = [];
 $securityLogsStatusFilter = strtolower(trim((string) ($_GET['status'] ?? 'all')));
 if (!in_array($securityLogsStatusFilter, ['all', 'success', 'failed', 'blocked', 'denied', 'error'], true)) {
     $securityLogsStatusFilter = 'all';
 }
 $securityLogsSearch = trim((string) ($_GET['q'] ?? ''));
+$customerDebtQuery = trim((string) ($_GET['customer_debt_query'] ?? ''));
+$customerDebtQuery = function_exists('mb_substr') ? mb_substr($customerDebtQuery, 0, 120) : substr($customerDebtQuery, 0, 120);
+$customerDebtPage = max(1, (int) ($_GET['debt_page'] ?? 1));
+$customerDebtPerPage = 120;
+$customerDebtPageCount = 1;
+$customerDebtTotalCount = 0;
 $canManageProducts = canManageProducts($userRole);
 $inventoryPage = max(1, (int) ($_GET['inv_page'] ?? 1));
 $inventoryPerPage = 120;
@@ -204,6 +212,7 @@ try {
     $customerCreditRepo = new CustomerCreditRepository($pdo);
 
     ensureCustomerCreditTables($pdo);
+    ensureSaleItemsTable($pdo);
     ensureReceivingItemsTable($pdo);
     ensureReturnsTableSchema($pdo);
     ensurePurchaseOrdersSchema($pdo);
@@ -413,7 +422,15 @@ try {
         $mobileMoneyTransactions = $mobileMoneyRepo->getRecentTransactions(50);
     }
     if ($currentPage === 'customers') {
-        $customerCredits = $customerCreditRepo->getCredits(300, false);
+        $customerDebtTotalCount = $customerCreditRepo->countCredits($customerDebtQuery);
+        $customerDebtPageCount = max(1, (int) ceil($customerDebtTotalCount / $customerDebtPerPage));
+        if ($customerDebtPage > $customerDebtPageCount) {
+            $customerDebtPage = $customerDebtPageCount;
+        }
+
+        $customerDebtOffset = ($customerDebtPage - 1) * $customerDebtPerPage;
+        $customerCredits = $customerCreditRepo->getCreditsPage($customerDebtPerPage, $customerDebtOffset, $customerDebtQuery);
+
         $customerOutstandingTotals = $customerCreditRepo->getCustomerOutstandingTotals();
 
         $creditIds = array_map(
@@ -421,6 +438,38 @@ try {
             $customerCredits
         );
         $customerCreditPayments = $customerCreditRepo->getPaymentsByCreditIds($creditIds, 1500);
+
+        $saleIds = array_map(
+            static fn(array $item): int => (int) ($item['sale_id'] ?? 0),
+            $customerCredits
+        );
+        $customerCreditSaleItems = $customerCreditRepo->getSaleItemsBySaleIds($saleIds, 5000);
+
+        $debtAddProductRows = [];
+        if ($inventoryTotalCount > 0) {
+            $batchSize = 1000;
+            $offset = 0;
+            while (count($debtAddProductRows) < $inventoryTotalCount) {
+                $batch = $inventoryRepo->getProducts($batchSize, $offset);
+                if (count($batch) === 0) {
+                    break;
+                }
+
+                $debtAddProductRows = array_merge($debtAddProductRows, $batch);
+                $offset += $batchSize;
+
+                if (count($batch) < $batchSize) {
+                    break;
+                }
+            }
+        }
+
+        $debtAddProductOptions = array_map(static fn(array $item) => [
+            'id' => (int) ($item['id'] ?? 0),
+            'name' => (string) ($item['name'] ?? ''),
+            'stock_qty' => (int) ($item['stock_qty'] ?? 0),
+            'unit_price' => (float) ($item['unit_price'] ?? 0),
+        ], $debtAddProductRows);
     }
     $storeSettings = getStoreSettings($pdo, $storeSettings);
 
@@ -896,6 +945,8 @@ function resolveEntityPageKey(string $entity): ?string
         'customer' => 'customers',
         'customer_delete' => 'customers',
         'customer_payment' => 'customers',
+        'customer_debt_add_item' => 'customers',
+        'customer_debt_remove_item' => 'customers',
         'supplier' => 'suppliers',
         'supplier_delete' => 'suppliers',
         'employee' => 'employees',
@@ -1020,6 +1071,53 @@ function ensureCustomerCreditTables(PDO $pdo): void
                 ON DELETE RESTRICT ON UPDATE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
     );
+}
+
+function ensureSaleItemsTable(PDO $pdo): void
+{
+    try {
+        $tableExistsStmt = $pdo->prepare(
+            'SELECT COUNT(*) AS total
+             FROM information_schema.tables
+             WHERE table_schema = DATABASE()
+               AND table_name = "sale_items"'
+        );
+        $tableExistsStmt->execute();
+        $tableExists = (int) ($tableExistsStmt->fetch()['total'] ?? 0) > 0;
+
+        if (!$tableExists) {
+            // Keep this table creation tolerant across environments with older/different key types.
+            // We intentionally avoid foreign keys here so a mismatch never forces app-wide demo mode.
+            $pdo->exec(
+                'CREATE TABLE IF NOT EXISTS sale_items (
+                    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                    sale_id BIGINT NOT NULL,
+                    product_id INT NOT NULL,
+                    quantity INT NOT NULL DEFAULT 0,
+                    unit_price DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    line_total DECIMAL(14,2) NOT NULL DEFAULT 0,
+                    note VARCHAR(255) NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_sale_items_sale (sale_id),
+                    INDEX idx_sale_items_product (product_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+        }
+
+        $noteColumnCheck = $pdo->prepare(
+            'SELECT COUNT(*) AS total
+             FROM information_schema.columns
+             WHERE table_schema = DATABASE()
+               AND table_name = "sale_items"
+               AND column_name = "note"'
+        );
+        $noteColumnCheck->execute();
+        if ((int) ($noteColumnCheck->fetch()['total'] ?? 0) === 0) {
+            $pdo->exec('ALTER TABLE sale_items ADD COLUMN note VARCHAR(255) NULL AFTER line_total');
+        }
+    } catch (Throwable $exception) {
+        error_log('[POS Dashboard] sale_items bootstrap warning: ' . $exception->getMessage());
+    }
 }
 
 function ensureReceivingItemsTable(PDO $pdo): void
@@ -1781,6 +1879,21 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                         'payment_method' => $paymentMethod,
                     ]);
 
+                    $saleItemStmt = $pdo->prepare(
+                        'INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, line_total, note, created_at)
+                         VALUES (:sale_id, :product_id, :quantity, :unit_price, :line_total, :note, NOW())'
+                    );
+                    foreach ($receiptItems as $item) {
+                        $saleItemStmt->execute([
+                            ':sale_id' => $saleId,
+                            ':product_id' => (int) ($item['product_id'] ?? 0),
+                            ':quantity' => (int) ($item['quantity'] ?? 0),
+                            ':unit_price' => (float) ($item['unit_price'] ?? 0),
+                            ':line_total' => (float) ($item['line_total'] ?? 0),
+                            ':note' => null,
+                        ]);
+                    }
+
                     if ($isCreditSale) {
                         $customerCreditRepo = new CustomerCreditRepository($pdo);
                         $customerCreditRepo->createCreditForSale(
@@ -1874,6 +1987,302 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                         (string) ($paymentResult['status'] ?? 'Updated')
                     ),
                 ];
+
+            case 'customer_debt_add_item':
+                if ($currentPage !== 'customers') {
+                    throw new RuntimeException('Debt item updates are only allowed from the customers page.');
+                }
+
+                $creditId = (int) ($_POST['credit_id'] ?? 0);
+                $productId = (int) ($_POST['product_id'] ?? 0);
+                $quantity = (int) ($_POST['quantity'] ?? 0);
+                $itemNote = trim((string) ($_POST['item_note'] ?? ''));
+                $itemNote = function_exists('mb_substr') ? mb_substr($itemNote, 0, 255) : substr($itemNote, 0, 255);
+                $itemsJson = trim((string) ($_POST['items_json'] ?? ''));
+
+                $itemRows = [];
+                if ($itemsJson !== '') {
+                    $decodedItems = json_decode($itemsJson, true);
+                    if (!is_array($decodedItems)) {
+                        throw new RuntimeException('Invalid forgotten product payload.');
+                    }
+
+                    foreach ($decodedItems as $row) {
+                        if (!is_array($row)) {
+                            continue;
+                        }
+
+                        $rowProductId = (int) ($row['product_id'] ?? 0);
+                        $rowQuantity = (int) ($row['quantity'] ?? 0);
+                        $rowNote = trim((string) ($row['note'] ?? ''));
+                        $rowNote = function_exists('mb_substr') ? mb_substr($rowNote, 0, 255) : substr($rowNote, 0, 255);
+
+                        if ($rowProductId <= 0 || $rowQuantity <= 0) {
+                            continue;
+                        }
+                        if ($rowQuantity > MAX_SALE_LINE_QTY) {
+                            throw new RuntimeException('One or more item quantities exceed allowed limit.');
+                        }
+
+                        $itemRows[] = [
+                            'product_id' => $rowProductId,
+                            'quantity' => $rowQuantity,
+                            'note' => $rowNote,
+                        ];
+                    }
+                }
+
+                if (count($itemRows) === 0 && $productId > 0 && $quantity > 0) {
+                    if ($quantity > MAX_SALE_LINE_QTY) {
+                        throw new RuntimeException('Quantity exceeds allowed limit.');
+                    }
+
+                    $itemRows[] = [
+                        'product_id' => $productId,
+                        'quantity' => $quantity,
+                        'note' => $itemNote,
+                    ];
+                }
+
+                if ($creditId <= 0) {
+                    throw new RuntimeException('Valid debt record is required.');
+                }
+                if (count($itemRows) === 0) {
+                    throw new RuntimeException('Add at least one product to continue.');
+                }
+                if (count($itemRows) > MAX_SALE_ITEMS) {
+                    throw new RuntimeException('Too many product lines. Please submit fewer items.');
+                }
+
+                $pdo->beginTransaction();
+                try {
+                    $creditStmt = $pdo->prepare(
+                        'SELECT id, sale_id, customer_id, total_amount, paid_amount, outstanding_amount, status
+                         FROM customer_credits
+                         WHERE id = :id
+                         FOR UPDATE'
+                    );
+                    $creditStmt->execute([':id' => $creditId]);
+                    $credit = $creditStmt->fetch();
+                    if (!is_array($credit)) {
+                        throw new RuntimeException('Debt record not found.');
+                    }
+
+                    $saleId = (int) ($credit['sale_id'] ?? 0);
+                    if ($saleId <= 0) {
+                        throw new RuntimeException('This debt is not linked to a valid sale.');
+                    }
+
+                    $inventoryRepo = new InventoryRepository($pdo);
+                    $saleItemStmt = $pdo->prepare(
+                        'INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, line_total, note, created_at)
+                         VALUES (:sale_id, :product_id, :quantity, :unit_price, :line_total, :note, NOW())'
+                    );
+
+                    $addedLineCount = 0;
+                    $addedAmountTotal = 0.0;
+                    foreach ($itemRows as $line) {
+                        $lineProductId = (int) ($line['product_id'] ?? 0);
+                        $lineQuantity = (int) ($line['quantity'] ?? 0);
+                        $lineNote = (string) ($line['note'] ?? '');
+
+                        $product = $inventoryRepo->getProduct($lineProductId);
+                        if (!is_array($product)) {
+                            throw new RuntimeException('One or more selected products were not found.');
+                        }
+
+                        $unitPrice = isset($product['unit_price'])
+                            ? (float) $product['unit_price']
+                            : (float) ($product['price'] ?? 0);
+                        if ($unitPrice <= 0) {
+                            throw new RuntimeException('One or more products have invalid pricing.');
+                        }
+
+                        $lineTotal = $unitPrice * $lineQuantity;
+                        if ($lineTotal <= 0) {
+                            throw new RuntimeException('Calculated line total is invalid.');
+                        }
+
+                        $inventoryRepo->deductStock($lineProductId, $lineQuantity);
+
+                        $saleItemStmt->execute([
+                            ':sale_id' => $saleId,
+                            ':product_id' => $lineProductId,
+                            ':quantity' => $lineQuantity,
+                            ':unit_price' => $unitPrice,
+                            ':line_total' => $lineTotal,
+                            ':note' => $lineNote !== '' ? $lineNote : null,
+                        ]);
+
+                        $addedLineCount += 1;
+                        $addedAmountTotal += $lineTotal;
+                    }
+
+                    if ($addedLineCount === 0 || $addedAmountTotal <= 0) {
+                        throw new RuntimeException('No valid products were submitted.');
+                    }
+
+                    $saleUpdateStmt = $pdo->prepare(
+                        'UPDATE sales
+                         SET amount = amount + :line_total
+                         WHERE id = :sale_id'
+                    );
+                    $saleUpdateStmt->execute([
+                        ':sale_id' => $saleId,
+                        ':line_total' => $addedAmountTotal,
+                    ]);
+
+                    $newTotal = (float) ($credit['total_amount'] ?? 0) + $addedAmountTotal;
+                    $paidAmount = (float) ($credit['paid_amount'] ?? 0);
+                    $newOutstanding = max(0.0, $newTotal - $paidAmount);
+                    $newStatus = $newOutstanding <= 0 ? 'Paid' : ($paidAmount > 0 ? 'Partial' : 'Open');
+
+                    $creditUpdateStmt = $pdo->prepare(
+                        'UPDATE customer_credits
+                         SET total_amount = :total_amount,
+                             outstanding_amount = :outstanding_amount,
+                             status = :status,
+                             updated_at = NOW()
+                         WHERE id = :id'
+                    );
+                    $creditUpdateStmt->execute([
+                        ':id' => $creditId,
+                        ':total_amount' => $newTotal,
+                        ':outstanding_amount' => $newOutstanding,
+                        ':status' => $newStatus,
+                    ]);
+
+                    $pdo->commit();
+
+                    return [
+                        'type' => 'success',
+                        'message' => sprintf(
+                            'Added %d product line(s). Debt updated by Tsh %s. New outstanding: Tsh %s.',
+                            $addedLineCount,
+                            moneyFormat($addedAmountTotal),
+                            moneyFormat($newOutstanding),
+                            ''
+                        ),
+                    ];
+                } catch (Throwable $exception) {
+                    if ($pdo->inTransaction()) {
+                        $pdo->rollBack();
+                    }
+                    throw $exception;
+                }
+
+            case 'customer_debt_remove_item':
+                if ($currentPage !== 'customers') {
+                    throw new RuntimeException('Debt item updates are only allowed from the customers page.');
+                }
+
+                $creditId = (int) ($_POST['credit_id'] ?? 0);
+                $saleItemId = (int) ($_POST['sale_item_id'] ?? 0);
+
+                if ($creditId <= 0 || $saleItemId <= 0) {
+                    throw new RuntimeException('Valid debt item is required.');
+                }
+
+                $pdo->beginTransaction();
+                try {
+                    $creditStmt = $pdo->prepare(
+                        'SELECT id, sale_id, total_amount, paid_amount
+                         FROM customer_credits
+                         WHERE id = :id
+                         FOR UPDATE'
+                    );
+                    $creditStmt->execute([':id' => $creditId]);
+                    $credit = $creditStmt->fetch();
+                    if (!is_array($credit)) {
+                        throw new RuntimeException('Debt record not found.');
+                    }
+
+                    $saleId = (int) ($credit['sale_id'] ?? 0);
+                    if ($saleId <= 0) {
+                        throw new RuntimeException('This debt is not linked to a valid sale.');
+                    }
+
+                    $saleItemStmt = $pdo->prepare(
+                        'SELECT id, sale_id, product_id, quantity, line_total
+                         FROM sale_items
+                         WHERE id = :id
+                         FOR UPDATE'
+                    );
+                    $saleItemStmt->execute([':id' => $saleItemId]);
+                    $saleItem = $saleItemStmt->fetch();
+                    if (!is_array($saleItem)) {
+                        throw new RuntimeException('Product line not found.');
+                    }
+
+                    if ((int) ($saleItem['sale_id'] ?? 0) !== $saleId) {
+                        throw new RuntimeException('Selected product line does not belong to this debt.');
+                    }
+
+                    $lineTotal = (float) ($saleItem['line_total'] ?? 0);
+                    $lineQuantity = (int) ($saleItem['quantity'] ?? 0);
+                    $productId = (int) ($saleItem['product_id'] ?? 0);
+                    if ($lineTotal <= 0 || $lineQuantity <= 0 || $productId <= 0) {
+                        throw new RuntimeException('Product line data is invalid.');
+                    }
+
+                    $currentTotal = (float) ($credit['total_amount'] ?? 0);
+                    $paidAmount = (float) ($credit['paid_amount'] ?? 0);
+                    $newTotal = max(0.0, $currentTotal - $lineTotal);
+
+                    if ($paidAmount > $newTotal + 0.00001) {
+                        throw new RuntimeException('Cannot remove this product because payments already exceed the resulting debt total.');
+                    }
+
+                    $deleteLineStmt = $pdo->prepare('DELETE FROM sale_items WHERE id = :id');
+                    $deleteLineStmt->execute([':id' => $saleItemId]);
+
+                    $inventoryRepo = new InventoryRepository($pdo);
+                    $inventoryRepo->addStock($productId, $lineQuantity);
+
+                    $saleUpdateStmt = $pdo->prepare(
+                        'UPDATE sales
+                         SET amount = GREATEST(0, amount - :line_total)
+                         WHERE id = :sale_id'
+                    );
+                    $saleUpdateStmt->execute([
+                        ':sale_id' => $saleId,
+                        ':line_total' => $lineTotal,
+                    ]);
+
+                    $newOutstanding = max(0.0, $newTotal - $paidAmount);
+                    $newStatus = $newOutstanding <= 0 ? 'Paid' : ($paidAmount > 0 ? 'Partial' : 'Open');
+
+                    $creditUpdateStmt = $pdo->prepare(
+                        'UPDATE customer_credits
+                         SET total_amount = :total_amount,
+                             outstanding_amount = :outstanding_amount,
+                             status = :status,
+                             updated_at = NOW()
+                         WHERE id = :id'
+                    );
+                    $creditUpdateStmt->execute([
+                        ':id' => $creditId,
+                        ':total_amount' => $newTotal,
+                        ':outstanding_amount' => $newOutstanding,
+                        ':status' => $newStatus,
+                    ]);
+
+                    $pdo->commit();
+
+                    return [
+                        'type' => 'success',
+                        'message' => sprintf(
+                            'Product removed. Debt reduced by Tsh %s. New outstanding: Tsh %s.',
+                            moneyFormat($lineTotal),
+                            moneyFormat($newOutstanding)
+                        ),
+                    ];
+                } catch (Throwable $exception) {
+                    if ($pdo->inTransaction()) {
+                        $pdo->rollBack();
+                    }
+                    throw $exception;
+                }
 
             case 'product':
                 if (!canManageProducts($userRole)) {
@@ -3711,7 +4120,24 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                 <div class="data-table-container" style="margin-top:18px;">
                     <div class="table-header">
                         <h3 style="margin:0; font-size:16px;">Customer Debt Ledger</h3>
-                        <div class="table-filters">
+                        <div class="table-filters debt-ledger-tools">
+                            <form method="GET" action="" class="debt-ledger-search-form">
+                                <input type="hidden" name="page" value="customers">
+                                <div class="search-box debt-ledger-search-box">
+                                    <i class="fa-solid fa-magnifying-glass"></i>
+                                    <input
+                                        type="search"
+                                        id="customerDebtSearch"
+                                        name="customer_debt_query"
+                                        value="<?= e($customerDebtQuery) ?>"
+                                        placeholder="Search customer, sale ref, phone, date..."
+                                        class="debt-ledger-search-input"
+                                    >
+                                </div>
+                                <?php if ($customerDebtQuery !== ''): ?>
+                                    <a class="debt-ledger-clear-btn" href="?page=customers">Clear</a>
+                                <?php endif; ?>
+                            </form>
                             <select id="customerDebtStatusFilter">
                                 <option value="all">All Debts</option>
                                 <option value="open">Open/Partial</option>
@@ -3799,7 +4225,17 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                             ? 'overdue'
                                             : (in_array($statusText, ['Open', 'Partial'], true) ? 'open' : strtolower($statusText));
                                     ?>
-                                    <tr data-credit-status="<?= e($rowFilterState) ?>" data-overdue="<?= $isOverdue ? '1' : '0' ?>">
+                                    <?php
+                                        $searchBlob = strtolower(trim(implode(' ', [
+                                            (string) ($credit['customer_name'] ?? ''),
+                                            (string) ($credit['transaction_no'] ?? ''),
+                                            (string) ($credit['sale_id'] ?? ''),
+                                            (string) ($credit['due_date'] ?? ''),
+                                            (string) ($credit['created_at'] ?? ''),
+                                            (string) ($credit['status'] ?? ''),
+                                        ])));
+                                    ?>
+                                    <tr data-credit-status="<?= e($rowFilterState) ?>" data-overdue="<?= $isOverdue ? '1' : '0' ?>" data-sale-id="<?= (int) ($credit['sale_id'] ?? 0) ?>" data-credit-search="<?= e($searchBlob) ?>">
                                         <td><?= e((string) ($credit['customer_name'] ?? '')) ?></td>
                                         <td><code><?= e((string) ($credit['transaction_no'] ?? ('SALE-' . (int) ($credit['sale_id'] ?? 0)))) ?></code></td>
                                         <td>Tsh <?= moneyFormat((float) ($credit['total_amount'] ?? 0)) ?></td>
@@ -3823,12 +4259,45 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                             <button class="btn-icon" data-action="viewCustomerDebtPayments" data-value="<?= (int) ($credit['id'] ?? 0) ?>" title="View Payments">
                                                 <i class="fa-solid fa-clock-rotate-left"></i>
                                             </button>
+                                            <?php if ((int) ($credit['sale_id'] ?? 0) > 0): ?>
+                                                <button class="btn-icon" data-action="addCustomerDebtProduct" data-value="<?= (int) ($credit['id'] ?? 0) ?>" title="Add Product">
+                                                    <i class="fa-solid fa-cart-plus"></i>
+                                                </button>
+                                                <button class="btn-icon" data-action="viewCustomerDebtProducts" data-value="<?= (int) ($credit['id'] ?? 0) ?>" title="View Products">
+                                                    <i class="fa-solid fa-basket-shopping"></i>
+                                                </button>
+                                            <?php endif; ?>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php endif; ?>
                         </tbody>
                     </table>
+                    <?php if ($customerDebtPageCount > 1): ?>
+                        <?php
+                            $customerDebtBaseQuery = '?page=customers';
+                            if ($customerDebtQuery !== '') {
+                                $customerDebtBaseQuery .= '&customer_debt_query=' . urlencode($customerDebtQuery);
+                            }
+                            $customerDebtRangeStart = $customerDebtTotalCount > 0
+                                ? (($customerDebtPage - 1) * $customerDebtPerPage) + 1
+                                : 0;
+                            $customerDebtRangeEnd = min($customerDebtTotalCount, $customerDebtPage * $customerDebtPerPage);
+                        ?>
+                        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:12px; flex-wrap:wrap;">
+                            <div style="color:#6b7280; font-size:13px;">
+                                Showing <?= moneyFormat($customerDebtRangeStart) ?>-<?= moneyFormat($customerDebtRangeEnd) ?> of <?= moneyFormat($customerDebtTotalCount) ?> debt records (Page <?= moneyFormat($customerDebtPage) ?> of <?= moneyFormat($customerDebtPageCount) ?>)
+                            </div>
+                            <div style="display:flex; gap:8px;">
+                                <?php if ($customerDebtPage > 1): ?>
+                                    <a class="btn btn-secondary" href="<?= $customerDebtBaseQuery ?>&debt_page=<?= $customerDebtPage - 1 ?>">Previous</a>
+                                <?php endif; ?>
+                                <?php if ($customerDebtPage < $customerDebtPageCount): ?>
+                                    <a class="btn btn-secondary" href="<?= $customerDebtBaseQuery ?>&debt_page=<?= $customerDebtPage + 1 ?>">Next</a>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    <?php endif; ?>
                     <div id="customerDebtNoResult" class="inventory-empty-state" style="display:none; margin-top:10px;">
                         <i class="fa-regular fa-folder-open"></i>
                         <span>No debt records match this filter.</span>
@@ -5742,6 +6211,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
     'csrfToken' => getCsrfToken(),
     'saleCustomers' => $saleCustomerOptions,
     'saleProducts' => $saleProductOptions,
+    'debtAddProducts' => $debtAddProductOptions,
     'checkoutPaymentOptions' => getAvailableCheckoutPaymentOptions($storeSettings),
     'flashReceipt' => is_array($flashReceipt) ? $flashReceipt : null,
     'canManageProducts' => $canManageProducts,
@@ -5865,6 +6335,17 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
         'reference' => (string) ($item['reference'] ?? ''),
         'created_at' => (string) ($item['created_at'] ?? ''),
     ], $customerCreditPayments),
+    'customerCreditSaleItems' => array_map(static fn(array $item) => [
+        'id' => (int) ($item['id'] ?? 0),
+        'sale_id' => (int) ($item['sale_id'] ?? 0),
+        'product_id' => (int) ($item['product_id'] ?? 0),
+        'product_name' => (string) ($item['product_name'] ?? ''),
+        'quantity' => (int) ($item['quantity'] ?? 0),
+        'unit_price' => (float) ($item['unit_price'] ?? 0),
+        'line_total' => (float) ($item['line_total'] ?? 0),
+        'note' => (string) ($item['note'] ?? ''),
+        'created_at' => (string) ($item['created_at'] ?? ''),
+    ], $customerCreditSaleItems),
 ], JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
 <script src="assets/js/dashboard.js?v=<?= urlencode((string) @filemtime(__DIR__ . '/assets/js/dashboard.js')) ?>"></script>
 </body>

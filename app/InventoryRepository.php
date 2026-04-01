@@ -288,6 +288,33 @@ final class InventoryRepository
         }
     }
 
+    public function addStock(int $productId, int $quantity): void
+    {
+        if ($productId <= 0) {
+            throw new InvalidArgumentException('Valid product ID is required.');
+        }
+        if ($quantity <= 0) {
+            throw new InvalidArgumentException('Quantity must be greater than zero.');
+        }
+
+        $columns = $this->resolveProductColumnMap();
+        $stockColumn = $columns['quantity'];
+
+        $stmt = $this->pdo->prepare(
+            'UPDATE products
+             SET ' . $stockColumn . ' = ' . $stockColumn . ' + :quantity_add
+             WHERE id = :id'
+        );
+        $stmt->execute([
+            ':id' => $productId,
+            ':quantity_add' => $quantity,
+        ]);
+
+        if ($stmt->rowCount() < 1) {
+            throw new RuntimeException('Product not found while restoring stock.');
+        }
+    }
+
     public function getLowStockProducts(): array
     {
         $columns = $this->resolveProductColumnMap();

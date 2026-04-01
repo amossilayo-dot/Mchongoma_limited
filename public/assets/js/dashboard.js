@@ -1076,6 +1076,26 @@ function initActionBindings() {
       return;
     }
 
+    if (action === "viewCustomerDebtProducts") {
+      viewCustomerDebtProducts(parseInt(value, 10));
+      return;
+    }
+
+    if (action === "addCustomerDebtProduct") {
+      addCustomerDebtProduct(parseInt(value, 10));
+      return;
+    }
+
+    if (action === "removeCustomerDebtProductLine") {
+      const creditId = Number.parseInt(
+        target.getAttribute("data-credit-id") || "0",
+        10,
+      );
+      const productName = target.getAttribute("data-product-name") || "Product";
+      removeCustomerDebtProductLine(parseInt(value, 10), creditId, productName);
+      return;
+    }
+
     if (action === "viewReceipt") {
       viewReceipt(value);
       return;
@@ -4170,24 +4190,89 @@ function initTableFilters() {
 
 function initCustomerDebtFilters() {
   const filterEl = document.getElementById("customerDebtStatusFilter");
+  const searchEl = document.getElementById("customerDebtSearch");
   const table = document.getElementById("customerDebtTable");
   const noResultEl = document.getElementById("customerDebtNoResult");
   if (!filterEl || !table) {
     return;
   }
 
+  const debounce = (fn, delayMs = 120) => {
+    let timer = null;
+    return (...args) => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      timer = setTimeout(() => fn(...args), delayMs);
+    };
+  };
+
   const applyFilter = () => {
     const selected = (filterEl.value || "all").toLowerCase();
+    const query = (searchEl?.value || "").trim().toLowerCase();
     const rows = table.querySelectorAll("tbody tr");
     let visibleCount = 0;
 
-    rows.forEach((row) => {
-      const status = (
+    const getRowState = (row) => {
+      const datasetState = (
         row.getAttribute("data-credit-status") || ""
       ).toLowerCase();
+      const dueDateRaw =
+        row.querySelector("td:nth-child(6)")?.textContent?.trim() || "";
+      const outstandingRaw =
+        row.querySelector("td:nth-child(5)")?.textContent?.trim() || "";
+      const outstanding = Number.parseFloat(
+        outstandingRaw.replace(/[^\d.\-]/g, ""),
+      );
+
+      const hasOutstanding = Number.isFinite(outstanding) && outstanding > 0;
+      const dueTimestamp = Date.parse(dueDateRaw);
+      const now = new Date();
+      now.setHours(0, 0, 0, 0);
+      const isOverdue =
+        hasOutstanding && Number.isFinite(dueTimestamp)
+          ? dueTimestamp < now.getTime()
+          : false;
+
+      if (isOverdue) {
+        return "overdue";
+      }
+
+      if (hasOutstanding) {
+        return "open";
+      }
+
+      if (datasetState === "partial") {
+        return "open";
+      }
+
+      if (datasetState === "paid") {
+        return "paid";
+      }
+
+      if (datasetState === "overdue") {
+        return "overdue";
+      }
+
+      if (datasetState === "open") {
+        return "open";
+      }
+
+      return "";
+    };
+
+    rows.forEach((row) => {
+      const status = getRowState(row);
+
+      const searchText = (
+        row.getAttribute("data-credit-search") ||
+        row.textContent ||
+        ""
+      ).toLowerCase();
+      const matchesSearch = query === "" || searchText.includes(query);
 
       if (!status) {
-        const show = selected === "all";
+        const show = selected === "all" && matchesSearch;
         row.style.display = show ? "" : "none";
         if (show) {
           visibleCount += 1;
@@ -4196,7 +4281,10 @@ function initCustomerDebtFilters() {
       }
 
       if (selected === "all") {
-        row.style.display = "";
+        row.style.display = matchesSearch ? "" : "none";
+        if (!matchesSearch) {
+          return;
+        }
         visibleCount += 1;
         return;
       }
@@ -4204,7 +4292,7 @@ function initCustomerDebtFilters() {
       const matchesOpenFilter =
         selected === "open" && (status === "open" || status === "partial");
       const matchesDirect = status === selected;
-      const show = matchesOpenFilter || matchesDirect;
+      const show = (matchesOpenFilter || matchesDirect) && matchesSearch;
       row.style.display = show ? "" : "none";
       if (show) {
         visibleCount += 1;
@@ -4218,6 +4306,7 @@ function initCustomerDebtFilters() {
 
   filterEl.addEventListener("change", applyFilter);
   filterEl.addEventListener("input", applyFilter);
+  searchEl?.addEventListener("input", debounce(applyFilter, 90));
   applyFilter();
 }
 
@@ -6070,6 +6159,516 @@ function viewCustomerDebtPayments(id) {
   openModal("Debt Payment History", content, [
     { text: "Close", class: "btn-primary", onclick: "closeModal()" },
   ]);
+}
+
+function viewCustomerDebtProducts(id) {
+  const creditId = Number.parseInt(id, 10);
+  if (!Number.isFinite(creditId) || creditId <= 0) {
+    showToast("error", "Invalid credit ID");
+    return;
+  }
+
+  const credits = Array.isArray(APP_CONFIG.customerCredits)
+    ? APP_CONFIG.customerCredits
+    : [];
+  const saleItems = Array.isArray(APP_CONFIG.customerCreditSaleItems)
+    ? APP_CONFIG.customerCreditSaleItems
+    : [];
+
+  const credit = credits.find(
+    (item) => Number.parseInt(String(item.id || "0"), 10) === creditId,
+  );
+  if (!credit) {
+    showToast("error", "Credit record not found");
+    return;
+  }
+
+  const saleId = Number.parseInt(String(credit.sale_id || "0"), 10);
+  if (!Number.isFinite(saleId) || saleId <= 0) {
+    showToast("warning", "No linked sale found for this debt.");
+    return;
+  }
+
+  const items = saleItems.filter(
+    (item) => Number.parseInt(String(item.sale_id || "0"), 10) === saleId,
+  );
+
+  const transactionNo = escapeHtml(
+    String(credit.transaction_no || `SALE-${saleId}`),
+  );
+  const customerName = escapeHtml(String(credit.customer_name || "Customer"));
+
+  const rowsHtml =
+    items.length === 0
+      ? '<tr><td colspan="7" style="text-align:center; color:#6b7280;">No sale items saved for this transaction yet.</td></tr>'
+      : items
+          .map((item) => {
+            const itemId = Number.parseInt(String(item.id || "0"), 10) || 0;
+            const name = escapeHtml(
+              String(item.product_name || `Product #${item.product_id || ""}`),
+            );
+            const quantity =
+              Number.parseInt(String(item.quantity || 0), 10) || 0;
+            const unitPrice = formatMoney(
+              Number.parseFloat(String(item.unit_price || 0)),
+            );
+            const lineTotal = formatMoney(
+              Number.parseFloat(String(item.line_total || 0)),
+            );
+            const note = escapeHtml(String(item.note || "-"));
+
+            return `
+              <tr>
+                <td>${name}</td>
+                <td>${escapeHtml(String(quantity))}</td>
+                <td>Tsh ${escapeHtml(unitPrice)}</td>
+                <td><strong>Tsh ${escapeHtml(lineTotal)}</strong></td>
+                <td>${escapeHtml(String(item.product_id || "-"))}</td>
+                <td>${note}</td>
+                <td>
+                  ${
+                    itemId > 0
+                      ? `<button type="button" class="btn-icon danger" title="Remove product" aria-label="Remove product" data-action="removeCustomerDebtProductLine" data-value="${escapeHtml(String(itemId))}" data-credit-id="${escapeHtml(String(creditId))}" data-product-name="${name}"><i class="fa-solid fa-trash"></i></button>`
+                      : "-"
+                  }
+                </td>
+              </tr>
+            `;
+          })
+          .join("");
+
+  const content = `
+    <div style="display:grid; gap:10px;">
+      <div><strong>Customer:</strong> ${customerName}</div>
+      <div><strong>Sale Ref:</strong> <code>${transactionNo}</code></div>
+      <div style="overflow:auto; margin-top:4px;">
+        <table class="data-table" style="min-width:680px;">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Qty</th>
+              <th>Unit Price</th>
+              <th>Line Total</th>
+              <th>Product ID</th>
+              <th>Note</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  openModal("Products Taken", content, [
+    { text: "Close", class: "btn-primary", onclick: "closeModal()" },
+  ]);
+}
+
+function removeCustomerDebtProductLine(
+  lineId,
+  creditId,
+  productName = "Product",
+) {
+  const saleItemId = Number.parseInt(lineId, 10);
+  const debtCreditId = Number.parseInt(creditId, 10);
+  if (!Number.isFinite(saleItemId) || saleItemId <= 0) {
+    showToast("error", "Invalid product line");
+    return;
+  }
+  if (!Number.isFinite(debtCreditId) || debtCreditId <= 0) {
+    showToast("error", "Invalid debt record");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const safeName = escapeHtml(String(productName || "Product"));
+
+  const content = `
+    <form id="removeDebtLineForm" method="POST" action="?page=customers">
+      <input type="hidden" name="action" value="create_entity">
+      <input type="hidden" name="entity" value="customer_debt_remove_item">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <input type="hidden" name="credit_id" value="${escapeHtml(String(debtCreditId))}">
+      <input type="hidden" name="sale_item_id" value="${escapeHtml(String(saleItemId))}">
+
+      <div style="text-align:center; padding:8px 0 4px;">
+        <i class="fa-solid fa-triangle-exclamation" style="font-size:34px; color:#f59e0b; margin-bottom:10px;"></i>
+        <p style="margin:0; font-size:15px;">Remove this product from the debt?</p>
+        <p style="margin:8px 0 0; color:#6b7280;">${safeName}</p>
+      </div>
+    </form>
+  `;
+
+  openModal("Confirm Remove Product", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: "Remove",
+      class: "btn-danger",
+      onclick: 'document.getElementById("removeDebtLineForm").requestSubmit()',
+    },
+  ]);
+}
+
+function addCustomerDebtProduct(id) {
+  const creditId = Number.parseInt(id, 10);
+  if (!Number.isFinite(creditId) || creditId <= 0) {
+    showToast("error", "Invalid credit ID");
+    return;
+  }
+
+  const credits = Array.isArray(APP_CONFIG.customerCredits)
+    ? APP_CONFIG.customerCredits
+    : [];
+  const saleProducts = Array.isArray(APP_CONFIG.debtAddProducts)
+    ? APP_CONFIG.debtAddProducts
+    : Array.isArray(APP_CONFIG.saleProducts)
+      ? APP_CONFIG.saleProducts
+      : [];
+
+  const credit = credits.find(
+    (item) => Number.parseInt(String(item.id || "0"), 10) === creditId,
+  );
+  if (!credit) {
+    showToast("error", "Debt record not found");
+    return;
+  }
+
+  const productPool = saleProducts.filter((item) => {
+    const productId = Number.parseInt(String(item.id || "0"), 10);
+    return Number.isFinite(productId) && productId > 0;
+  });
+
+  if (productPool.length === 0) {
+    showToast("warning", "No products available to add.");
+    return;
+  }
+
+  const buildProductOptions = (list) =>
+    list
+      .map((product) => {
+        const productId = Number.parseInt(String(product.id || "0"), 10);
+        const stockQty = Number.parseInt(String(product.stock_qty || "0"), 10);
+        const unitPrice = Number.parseFloat(String(product.unit_price || "0"));
+        const productName = escapeHtml(
+          String(product.name || `Product #${productId}`),
+        );
+        const stockTag = stockQty > 0 ? `Stock ${stockQty}` : "Out of stock";
+        const disabledAttr = stockQty > 0 ? "" : " disabled";
+        return `<option value="${escapeHtml(String(productId))}" data-price="${escapeHtml(String(unitPrice))}" data-stock="${escapeHtml(String(stockQty))}"${disabledAttr}>${productName} | ${escapeHtml(stockTag)} | Tsh ${escapeHtml(formatMoney(unitPrice))}</option>`;
+      })
+      .join("");
+
+  const productOptions = buildProductOptions(productPool);
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const transactionNo = escapeHtml(
+    String(credit.transaction_no || `SALE-${credit.sale_id || credit.id}`),
+  );
+  const customerName = escapeHtml(String(credit.customer_name || "Customer"));
+
+  const content = `
+    <form id="addDebtProductForm" method="POST" action="?page=customers">
+      <input type="hidden" name="action" value="create_entity">
+      <input type="hidden" name="entity" value="customer_debt_add_item">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <input type="hidden" name="credit_id" value="${escapeHtml(String(creditId))}">
+      <input type="hidden" id="debtAddItemsJson" name="items_json" value="[]">
+
+      <div class="form-group">
+        <label>Customer</label>
+        <input type="text" value="${customerName}" readonly>
+      </div>
+      <div class="form-group">
+        <label>Sale Ref</label>
+        <input type="text" value="${transactionNo}" readonly>
+      </div>
+      <div class="form-group">
+        <label>Search Product</label>
+        <input type="search" id="debtAddProductSearch" placeholder="Type product name...">
+      </div>
+      <div class="form-group">
+        <label>Product</label>
+        <select id="debtAddProductId" name="product_id" required>${productOptions}</select>
+      </div>
+      <div class="form-group">
+        <label>Quantity</label>
+        <input type="number" id="debtAddProductQty" name="quantity" min="1" max="1000" step="1" value="1" required>
+        <small id="debtAddProductHint" style="color:#6b7280; display:block; margin-top:4px;"></small>
+      </div>
+      <div class="form-group">
+        <label>Reason / Note (Optional)</label>
+        <textarea id="debtAddProductNote" name="item_note" rows="2" maxlength="255" placeholder="e.g. Customer forgot to mention this item"></textarea>
+      </div>
+
+      <div class="form-group" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <button type="button" class="btn btn-secondary" id="debtAddPushLineBtn">Add To List</button>
+        <small style="color:#6b7280;">Add multiple products here, then click Add Product.</small>
+      </div>
+
+      <div style="overflow:auto; margin-top:4px;">
+        <table class="data-table" style="min-width:620px;">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Qty</th>
+              <th>Unit Price</th>
+              <th>Line Total</th>
+              <th>Note</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="debtAddLinesBody">
+            <tr id="debtAddLinesEmpty">
+              <td colspan="6" style="text-align:center; color:#6b7280;">No products added yet.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </form>
+  `;
+
+  openModal("Add Forgotten Product", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: "Add Product",
+      class: "btn-primary",
+      onclick: 'document.getElementById("addDebtProductForm").requestSubmit()',
+    },
+  ]);
+
+  const productSelect = document.getElementById("debtAddProductId");
+  const productSearch = document.getElementById("debtAddProductSearch");
+  const qtyInput = document.getElementById("debtAddProductQty");
+  const noteInput = document.getElementById("debtAddProductNote");
+  const hint = document.getElementById("debtAddProductHint");
+  const itemsJsonInput = document.getElementById("debtAddItemsJson");
+  const addLineBtn = document.getElementById("debtAddPushLineBtn");
+  const linesBody = document.getElementById("debtAddLinesBody");
+  const formEl = document.getElementById("addDebtProductForm");
+
+  const selectedLines = [];
+
+  const renderSelectedLines = () => {
+    if (!linesBody || !itemsJsonInput) {
+      return;
+    }
+
+    if (selectedLines.length === 0) {
+      linesBody.innerHTML =
+        '<tr id="debtAddLinesEmpty"><td colspan="6" style="text-align:center; color:#6b7280;">No products added yet.</td></tr>';
+      itemsJsonInput.value = "[]";
+      return;
+    }
+
+    linesBody.innerHTML = selectedLines
+      .map((line, index) => {
+        const lineTotal = line.unit_price * line.quantity;
+        const noteLabel = line.note ? escapeHtml(line.note) : "-";
+        return `
+          <tr>
+            <td>${escapeHtml(line.product_name)}</td>
+            <td>${escapeHtml(String(line.quantity))}</td>
+            <td>Tsh ${escapeHtml(formatMoney(line.unit_price))}</td>
+            <td><strong>Tsh ${escapeHtml(formatMoney(lineTotal))}</strong></td>
+            <td>${noteLabel}</td>
+            <td>
+              <button type="button" class="btn btn-secondary" data-debt-line-remove="${index}" style="padding:6px 8px;">Remove</button>
+            </td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    itemsJsonInput.value = JSON.stringify(
+      selectedLines.map((line) => ({
+        product_id: line.product_id,
+        quantity: line.quantity,
+        note: line.note,
+      })),
+    );
+  };
+
+  const pushCurrentLine = () => {
+    const selected = productSelect?.selectedOptions?.[0];
+    if (!selected) {
+      showToast("warning", "Select a product first.");
+      return false;
+    }
+
+    if (selected.disabled) {
+      showToast("warning", "Selected product is out of stock.");
+      return false;
+    }
+
+    const productId = Number.parseInt(selected.value || "0", 10);
+    const stock = Math.max(
+      0,
+      Number.parseInt(selected.getAttribute("data-stock") || "0", 10) || 0,
+    );
+    const unitPrice = Math.max(
+      0,
+      Number.parseFloat(selected.getAttribute("data-price") || "0") || 0,
+    );
+    const qty = Math.max(
+      1,
+      Number.parseInt(String(qtyInput?.value || "1"), 10) || 1,
+    );
+    const note = String(noteInput?.value || "").trim();
+    const productName = String(selected.textContent || `Product #${productId}`)
+      .split(" | ")[0]
+      .trim();
+
+    if (!Number.isFinite(productId) || productId <= 0) {
+      showToast("warning", "Invalid product selected.");
+      return false;
+    }
+    if (qty <= 0 || qty > stock) {
+      showToast("warning", `Quantity must be between 1 and ${stock}.`);
+      return false;
+    }
+
+    const existing = selectedLines.find(
+      (line) => line.product_id === productId && line.note === note,
+    );
+    if (existing) {
+      existing.quantity += qty;
+    } else {
+      selectedLines.push({
+        product_id: productId,
+        product_name: productName,
+        quantity: qty,
+        unit_price: unitPrice,
+        note,
+      });
+    }
+
+    if (qtyInput) {
+      qtyInput.value = "1";
+    }
+    if (noteInput) {
+      noteInput.value = "";
+    }
+
+    renderSelectedLines();
+    syncHint();
+    return true;
+  };
+
+  const applyProductSearch = () => {
+    if (!productSelect) {
+      return;
+    }
+
+    const q = (productSearch?.value || "").trim().toLowerCase();
+    const selectedValue = productSelect.value;
+    const filtered = q
+      ? productPool.filter((product) => {
+          const name = String(product.name || "").toLowerCase();
+          const id = String(product.id || "");
+          return name.includes(q) || id.includes(q);
+        })
+      : productPool;
+
+    productSelect.innerHTML = buildProductOptions(filtered);
+
+    if (selectedValue) {
+      const stillThere = Array.from(productSelect.options).some(
+        (opt) => opt.value === selectedValue && !opt.disabled,
+      );
+      if (stillThere) {
+        productSelect.value = selectedValue;
+      }
+    }
+
+    if (!productSelect.value || productSelect.selectedOptions[0]?.disabled) {
+      const firstAvailable = Array.from(productSelect.options).find(
+        (opt) => !opt.disabled,
+      );
+      if (firstAvailable) {
+        productSelect.value = firstAvailable.value;
+      }
+    }
+
+    syncHint();
+  };
+
+  const syncHint = () => {
+    const selected = productSelect?.selectedOptions?.[0];
+    if (!selected || !qtyInput || !hint) {
+      return;
+    }
+
+    const stock = Math.max(
+      0,
+      Number.parseInt(selected.getAttribute("data-stock") || "0", 10) || 0,
+    );
+    const price = Math.max(
+      0,
+      Number.parseFloat(selected.getAttribute("data-price") || "0") || 0,
+    );
+    qtyInput.max = String(Math.max(1, stock));
+
+    const qty = Math.max(
+      1,
+      Number.parseInt(String(qtyInput.value || "1"), 10) || 1,
+    );
+    if (qty > stock && stock > 0) {
+      qtyInput.value = String(stock);
+    } else {
+      qtyInput.value = String(qty);
+    }
+
+    const currentQty = Math.max(
+      1,
+      Number.parseInt(String(qtyInput.value || "1"), 10) || 1,
+    );
+    hint.textContent = `Available stock: ${stock}. Extra debt: Tsh ${formatMoney(price * currentQty)}`;
+  };
+
+  addLineBtn?.addEventListener("click", () => {
+    pushCurrentLine();
+  });
+
+  linesBody?.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    const removeIndexRaw = target.getAttribute("data-debt-line-remove");
+    if (removeIndexRaw === null) {
+      return;
+    }
+
+    const removeIndex = Number.parseInt(removeIndexRaw, 10);
+    if (!Number.isFinite(removeIndex) || removeIndex < 0) {
+      return;
+    }
+
+    selectedLines.splice(removeIndex, 1);
+    renderSelectedLines();
+  });
+
+  formEl?.addEventListener("submit", (event) => {
+    if (selectedLines.length === 0) {
+      const added = pushCurrentLine();
+      if (!added) {
+        event.preventDefault();
+        return;
+      }
+    }
+
+    renderSelectedLines();
+  });
+
+  productSelect?.addEventListener("change", syncHint);
+  qtyInput?.addEventListener("input", syncHint);
+  productSearch?.addEventListener("input", applyProductSearch);
+  renderSelectedLines();
+  applyProductSearch();
+  syncHint();
 }
 
 function deleteCustomer(id) {
