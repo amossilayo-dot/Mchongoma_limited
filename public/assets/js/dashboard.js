@@ -34,6 +34,7 @@ function getAppConfig() {
       },
       currentPage: "dashboard",
       csrfToken: "",
+      canManageProducts: false,
       inventoryProducts: [],
     };
   }
@@ -48,6 +49,7 @@ function getAppConfig() {
       },
       currentPage: "dashboard",
       csrfToken: "",
+      canManageProducts: false,
       inventoryProducts: [],
     };
   }
@@ -626,7 +628,14 @@ function setLanguage(lang) {
 }
 
 function initLanguage() {
-  applyLanguage(getCurrentLanguage());
+  const lang = getCurrentLanguage();
+  if (lang === "sw") {
+    applyLanguage("sw");
+    return;
+  }
+
+  // Default English content is already rendered server-side.
+  updateLanguageButtons("en");
 }
 
 // ============================================
@@ -643,6 +652,7 @@ document.addEventListener("DOMContentLoaded", function () {
   initKeyboardShortcuts();
   initTableFilters();
   initCustomerDebtFilters();
+  initSecurityLogsFilters();
   initSalesPage();
 });
 
@@ -1175,11 +1185,6 @@ function openModal(title, content, buttons = [], options = {}) {
             const form = document.getElementById(match[1]);
             if (form) form.requestSubmit();
           }
-        } else if (btn.onclick.startsWith("confirmDeleteProduct(")) {
-          const match = btn.onclick.match(
-            /confirmDeleteProduct\s*\(\s*(\d+)\s*\)/,
-          );
-          if (match) confirmDeleteProduct(parseInt(match[1], 10));
         } else if (btn.onclick.startsWith("printReceipt(")) {
           const match = btn.onclick.match(
             /printReceipt\s*\(\s*["']([A-Za-z0-9\-_]+)["']\s*\)/,
@@ -1699,6 +1704,11 @@ function showNewSaleModal() {
 }
 
 function showAddProductModal() {
+  if (!APP_CONFIG.canManageProducts) {
+    showToast("error", "Only administrators can add products.");
+    return;
+  }
+
   const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
   const content = `
         <form id="addProductForm" method="POST" action="?page=inventory">
@@ -1742,6 +1752,11 @@ function showAddProductModal() {
 }
 
 function showImportProductsModal() {
+  if (!APP_CONFIG.canManageProducts) {
+    showToast("error", "Only administrators can import products.");
+    return;
+  }
+
   const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
 
   const content = `
@@ -4094,9 +4109,58 @@ function applySalesTableFilters() {
 
 function initTableFilters() {
   const productSearch = document.getElementById("productSearch");
+  const productStockFilter = document.getElementById("productStockFilter");
+  const productCategoryFilter = document.getElementById(
+    "productCategoryFilter",
+  );
+  const customerSearch = document.getElementById("customerSearch");
+  const salesSearch = document.getElementById("salesSearch");
+  const salesPaymentFilter = document.getElementById("salesPaymentFilter");
+
   productSearch?.addEventListener("input", () => {
     filterTable("productTable", productSearch.value);
   });
+
+  productStockFilter?.addEventListener("change", () => {
+    filterByStock(productStockFilter.value);
+  });
+
+  productCategoryFilter?.addEventListener("change", () => {
+    filterByCategory(productCategoryFilter.value);
+  });
+
+  customerSearch?.addEventListener("input", () => {
+    filterTable("customerTable", customerSearch.value);
+  });
+
+  salesSearch?.addEventListener("input", () => {
+    filterTable("salesTable", salesSearch.value);
+  });
+
+  salesPaymentFilter?.addEventListener("change", () => {
+    filterByPayment("salesTable", salesPaymentFilter.value);
+  });
+
+  if (productStockFilter) {
+    TABLE_FILTER_STATE.productTable.stock = (
+      productStockFilter.value || "all"
+    ).toLowerCase();
+  }
+
+  if (productCategoryFilter) {
+    TABLE_FILTER_STATE.productTable.category = (
+      productCategoryFilter.value || "all"
+    ).toLowerCase();
+  }
+
+  if (salesPaymentFilter) {
+    TABLE_FILTER_STATE.salesTable.payment = normalizePaymentGroup(
+      salesPaymentFilter.value || "all",
+    );
+  }
+
+  applyProductTableFilters();
+  applySalesTableFilters();
 }
 
 function initCustomerDebtFilters() {
@@ -4131,6 +4195,18 @@ function initCustomerDebtFilters() {
 
   filterEl.addEventListener("change", applyFilter);
   applyFilter();
+}
+
+function initSecurityLogsFilters() {
+  const statusFilterEl = document.getElementById("securityLogsStatusFilter");
+  const filterFormEl = document.getElementById("securityLogsFilterForm");
+  if (!statusFilterEl || !filterFormEl) {
+    return;
+  }
+
+  statusFilterEl.addEventListener("change", () => {
+    filterFormEl.submit();
+  });
 }
 
 function initSalesPage() {
@@ -4900,6 +4976,11 @@ function createCustomer(event) {
 }
 
 function editProduct(id) {
+  if (!APP_CONFIG.canManageProducts) {
+    showToast("error", "Only administrators can edit products.");
+    return;
+  }
+
   const productId = Number.parseInt(id, 10);
   if (!Number.isFinite(productId) || productId <= 0) {
     showToast("error", "Invalid product ID");
@@ -4963,26 +5044,39 @@ function editProduct(id) {
 }
 
 function deleteProduct(id) {
+  if (!APP_CONFIG.canManageProducts) {
+    showToast("error", "Only administrators can delete products.");
+    return;
+  }
+
+  const productId = Number.parseInt(id, 10);
+  if (!Number.isFinite(productId) || productId <= 0) {
+    showToast("error", "Invalid product ID");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
   const content = `
-        <div style="text-align: center; padding: 20px 0;">
-            <i class="fa-solid fa-trash" style="font-size: 48px; color: #EF4444; margin-bottom: 16px;"></i>
-            <p style="margin: 0; font-size: 16px;">Are you sure you want to delete this product?</p>
-            <p style="margin: 8px 0 0 0; font-size: 13px; color: #6B7280;">This action cannot be undone.</p>
-        </div>
+        <form id="deleteProductForm" method="POST" action="?page=inventory">
+            <input type="hidden" name="action" value="update_entity">
+            <input type="hidden" name="entity" value="product_delete">
+            <input type="hidden" name="id" value="${productId}">
+            <input type="hidden" name="csrf_token" value="${csrfToken}">
+            <div style="text-align: center; padding: 20px 0;">
+                <i class="fa-solid fa-trash" style="font-size: 48px; color: #EF4444; margin-bottom: 16px;"></i>
+                <p style="margin: 0; font-size: 16px;">Are you sure you want to delete this product?</p>
+                <p style="margin: 8px 0 0 0; font-size: 13px; color: #6B7280;">This action cannot be undone.</p>
+            </div>
+        </form>
     `;
-  openModal("Confirm Delete", content, [
+  openModal("Delete Product", content, [
     { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
     {
       text: "Delete",
       class: "btn-danger",
-      onclick: "confirmDeleteProduct(" + id + ")",
+      onclick: 'document.getElementById("deleteProductForm").requestSubmit()',
     },
   ]);
-}
-
-function confirmDeleteProduct(id) {
-  closeModal();
-  showToast("success", "Product deleted successfully!");
 }
 
 function viewReceiving(id) {

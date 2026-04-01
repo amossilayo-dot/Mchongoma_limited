@@ -169,12 +169,17 @@ if (!in_array($securityLogsStatusFilter, ['all', 'success', 'failed', 'blocked',
     $securityLogsStatusFilter = 'all';
 }
 $securityLogsSearch = trim((string) ($_GET['q'] ?? ''));
+$canManageProducts = canManageProducts($userRole);
+$inventoryPage = max(1, (int) ($_GET['inv_page'] ?? 1));
+$inventoryPerPage = 120;
+$inventoryPageCount = 1;
 $inventoryProductCount = count($products);
 $inventoryTotalStockUnits = array_reduce(
     $products,
     static fn(int $carry, array $item): int => $carry + (int) ($item['stock_qty'] ?? 0),
     0
 );
+$inventoryVisibleInitialCount = count($products);
 
 try {
     $pdo = getDatabaseConnection();
@@ -203,6 +208,7 @@ try {
     ensurePurchaseOrdersSchema($pdo);
     ensureQuotationsSchema($pdo);
     ensureUserAccountManagementSchema($pdo);
+    ensurePerformanceIndexes($pdo);
 
     if (isStoreConfigSaveRequest()) {
         $_SESSION['flash_feedback'] = handleStoreConfigSave($pdo, $userRole);
@@ -226,28 +232,55 @@ try {
         $importFeedback = handleProductImport($inventoryRepo, $userRole);
     }
 
-    $totals = $dashboardRepo->getTotals();
-    $weeklySales = $dashboardRepo->getWeeklySales();
-    $monthlySales = $salesRepo->getMonthlySales();
-    $lowStockItems = $inventoryRepo->getLowStockProducts();
+    $cacheUserKey = 'u' . (string) ((int) ($authUser['id'] ?? 0));
+    $totals = getSessionCachedValue(
+        'perf:' . $cacheUserKey . ':totals',
+        20,
+        static fn(): array => $dashboardRepo->getTotals()
+    );
+    $weeklySales = getSessionCachedValue(
+        'perf:' . $cacheUserKey . ':weekly_sales',
+        20,
+        static fn(): array => $dashboardRepo->getWeeklySales()
+    );
+    $monthlySales = getSessionCachedValue(
+        'perf:' . $cacheUserKey . ':monthly_sales',
+        30,
+        static fn(): array => $salesRepo->getMonthlySales()
+    );
+    $lowStockItems = getSessionCachedValue(
+        'perf:' . $cacheUserKey . ':low_stock',
+        20,
+        static fn(): array => $inventoryRepo->getLowStockProducts()
+    );
     $lowStock = [
         'count' => count($lowStockItems),
         'items' => $lowStockItems,
         'message' => count($lowStockItems) > 0 ? count($lowStockItems) . ' products need restocking.' : 'All products are well stocked.',
     ];
-    $recentSales = $dashboardRepo->getRecentSales(5);
-    $inventoryProductLimit = $currentPage === 'inventory'
-        ? max(200, $inventoryRepo->getTotalCount())
-        : 200;
-    $products = $inventoryRepo->getProducts($inventoryProductLimit);
-    $inventoryProductCount = count($products);
-    $inventoryTotalStockUnits = array_reduce(
-        $products,
-        static fn(int $carry, array $item): int => $carry + (int) ($item['stock_qty'] ?? 0),
-        0
+    $recentSales = getSessionCachedValue(
+        'perf:' . $cacheUserKey . ':recent_sales',
+        15,
+        static fn(): array => $dashboardRepo->getRecentSales(5)
     );
+
+    $inventoryTotalCount = $inventoryRepo->getTotalCount();
+    if ($currentPage === 'inventory') {
+        $inventoryPageCount = max(1, (int) ceil($inventoryTotalCount / $inventoryPerPage));
+        if ($inventoryPage > $inventoryPageCount) {
+            $inventoryPage = $inventoryPageCount;
+        }
+        $inventoryOffset = ($inventoryPage - 1) * $inventoryPerPage;
+        $products = $inventoryRepo->getProducts($inventoryPerPage, $inventoryOffset);
+    } else {
+        $products = $inventoryRepo->getProducts(200);
+    }
+
+    $inventoryProductCount = $inventoryTotalCount;
+    $inventoryTotalStockUnits = (int) ($totals['totalStockUnits'] ?? 0);
+    $inventoryVisibleInitialCount = count($products);
     $customers = $customerRepo->getCustomers(50);
-    $saleProductLimit = max(500, $inventoryRepo->getTotalCount());
+    $saleProductLimit = min(300, max(120, $inventoryTotalCount));
     $saleProductOptions = array_map(static fn(array $item) => [
         'id' => (int) ($item['id'] ?? 0),
         'name' => (string) ($item['name'] ?? ''),
@@ -255,33 +288,42 @@ try {
         'stock_qty' => (int) ($item['stock_qty'] ?? 0),
         'unit_price' => (float) ($item['unit_price'] ?? 0),
     ], $inventoryRepo->getProducts($saleProductLimit));
-    $poProductOptions = $inventoryRepo->getProducts(max(500, $inventoryRepo->getTotalCount()));
-    $returnProductOptions = $inventoryRepo->getProducts(max(500, $inventoryRepo->getTotalCount()));
+
+    if (in_array($currentPage, ['purchase-orders', 'receiving'], true)) {
+        $poProductOptions = $inventoryRepo->getProducts($saleProductLimit);
+    }
+    if ($currentPage === 'returns') {
+        $returnProductOptions = $inventoryRepo->getProducts($saleProductLimit);
+    }
     $saleCustomerOptions = array_map(static fn(array $item) => [
         'id' => (int) ($item['id'] ?? 0),
         'name' => (string) ($item['name'] ?? ''),
     ], $customerRepo->getCustomers(500));
-    $allSales = $salesRepo->getSales(50);
-    if (canAccessPage('invoices', $userRole)) {
+    $allSales = in_array($currentPage, ['transactions', 'reports'], true)
+        ? $salesRepo->getSales(50)
+        : [];
+    if ($currentPage === 'invoices' && canAccessPage('invoices', $userRole)) {
         $invoicesRecords = (new InvoicesRepository($pdo))->getInvoices(300);
     }
-    if (canAccessPage('expenses', $userRole)) {
+    if ($currentPage === 'expenses' && canAccessPage('expenses', $userRole)) {
         $expensesRecords = (new ExpensesRepository($pdo))->getExpenses(300);
     }
-    if (canAccessPage('deliveries', $userRole)) {
+    if ($currentPage === 'deliveries' && canAccessPage('deliveries', $userRole)) {
         $deliveriesRecords = (new DeliveriesRepository($pdo))->getDeliveries(300);
     }
-    if (canAccessPage('quotations', $userRole)) {
+    if ($currentPage === 'quotations' && canAccessPage('quotations', $userRole)) {
         $quotationsRecords = (new QuotationsRepository($pdo))->getQuotations(300);
     }
-    $suppliers = (new SuppliersRepository($pdo))->getSuppliers(200);
-    if (canAccessPage('purchase-orders', $userRole)) {
+    if (in_array($currentPage, ['suppliers', 'purchase-orders', 'receiving'], true)) {
+        $suppliers = (new SuppliersRepository($pdo))->getSuppliers(200);
+    }
+    if ($currentPage === 'purchase-orders' && canAccessPage('purchase-orders', $userRole)) {
         $purchaseOrdersRepo = new PurchaseOrdersRepository($pdo);
         $purchaseOrdersRecords = $purchaseOrdersRepo->getOrders(300);
         $purchaseOrderIds = array_map(static fn(array $item): int => (int) ($item['id'] ?? 0), $purchaseOrdersRecords);
         $purchaseOrderItemsByOrder = $purchaseOrdersRepo->getOrderItemsByOrderIds($purchaseOrderIds);
     }
-    if (canAccessPage('receiving', $userRole)) {
+    if ($currentPage === 'receiving' && canAccessPage('receiving', $userRole)) {
         $receivingRepo = new ReceivingRepository($pdo);
         $receivingRecords = $receivingRepo->getReceivings(300);
         $receivingIds = array_map(static fn(array $item): int => (int) ($item['id'] ?? 0), $receivingRecords);
@@ -296,16 +338,16 @@ try {
             }
         ));
     }
-    if (canAccessPage('employees', $userRole)) {
+    if ($currentPage === 'employees' && canAccessPage('employees', $userRole)) {
         $employees = (new EmployeesRepository($pdo))->getEmployees(300);
     }
-    if (canAccessPage('appointments', $userRole)) {
+    if ($currentPage === 'appointments' && canAccessPage('appointments', $userRole)) {
         $appointments = (new AppointmentsRepository($pdo))->getAppointments(300);
     }
-    if (canAccessPage('returns', $userRole)) {
+    if ($currentPage === 'returns' && canAccessPage('returns', $userRole)) {
         $returnsRecords = (new ReturnsRepository($pdo))->getReturns(300);
     }
-    if (canAccessPage('users', $userRole) && hasUsersTable($pdo)) {
+    if ($currentPage === 'users' && canAccessPage('users', $userRole) && hasUsersTable($pdo)) {
         $usersStmt = $pdo->query(
             'SELECT id, name, email, role, is_active, created_at
              FROM users
@@ -363,10 +405,16 @@ try {
         'mobileMoney' => $mobileMoneyTotal,
     ];
 
-    $configuredLocations = $locationsRepo->getLocations(200);
-    $mobileMoneyTransactions = $mobileMoneyRepo->getRecentTransactions(50);
-    $customerCredits = $customerCreditRepo->getCredits(300, true);
-    $customerOutstandingTotals = $customerCreditRepo->getCustomerOutstandingTotals();
+    if ($currentPage === 'locations') {
+        $configuredLocations = $locationsRepo->getLocations(200);
+    }
+    if ($currentPage === 'transactions') {
+        $mobileMoneyTransactions = $mobileMoneyRepo->getRecentTransactions(50);
+    }
+    if ($currentPage === 'customers') {
+        $customerCredits = $customerCreditRepo->getCredits(300, true);
+        $customerOutstandingTotals = $customerCreditRepo->getCustomerOutstandingTotals();
+    }
     $storeSettings = getStoreSettings($pdo, $storeSettings);
 
     if ($currentPage === 'security-logs' && canAccessPage('security-logs', $userRole)) {
@@ -438,202 +486,216 @@ $reportRangeToExport = [
 ];
 $reportExportRange = $reportRangeToExport[$reportRange] ?? 'month';
 
-$todayStart = new DateTimeImmutable('today');
-$rangeStart = match ($reportRange) {
-    'today' => $todayStart,
-    'week' => $todayStart->sub(new DateInterval('P6D')),
-    'month' => $todayStart->sub(new DateInterval('P29D')),
-    'year' => $todayStart->sub(new DateInterval('P364D')),
-    default => null,
-};
-
 $reportSalesWindow = [];
-foreach ($allSales as $sale) {
-    $createdAtRaw = (string) ($sale['created_at'] ?? '');
-    $timestamp = strtotime($createdAtRaw);
-    if ($timestamp === false) {
-        continue;
-    }
-
-    if ($rangeStart instanceof DateTimeImmutable && $timestamp < $rangeStart->getTimestamp()) {
-        continue;
-    }
-
-    $sale['_ts'] = $timestamp;
-    $reportSalesWindow[] = $sale;
-}
-
-$reportRevenueTotal = array_reduce(
-    $reportSalesWindow,
-    static fn(float $carry, array $sale): float => $carry + (float) ($sale['amount'] ?? 0),
-    0.0
-);
-$reportTransactionsTotal = count($reportSalesWindow);
+$reportRevenueTotal = 0.0;
+$reportTransactionsTotal = 0;
 $reportProfitMargin = 11.3;
-$reportGrossProfit = $reportRevenueTotal * ($reportProfitMargin / 100);
-
-$daySeriesMap = [];
-foreach ($reportSalesWindow as $sale) {
-    $timestamp = (int) ($sale['_ts'] ?? 0);
-    if ($timestamp <= 0) {
-        continue;
-    }
-
-    $dayKey = ($reportRange === 'year' || $reportRange === 'all')
-        ? date('Y-m', $timestamp)
-        : date('Y-m-d', $timestamp);
-
-    if (!isset($daySeriesMap[$dayKey])) {
-        $daySeriesMap[$dayKey] = ['revenue' => 0.0, 'profit' => 0.0];
-    }
-
-    $amount = (float) ($sale['amount'] ?? 0);
-    $daySeriesMap[$dayKey]['revenue'] += $amount;
-    $daySeriesMap[$dayKey]['profit'] += $amount * ($reportProfitMargin / 100);
-}
-
+$reportGrossProfit = 0.0;
 $reportDaySeries = [];
-if ($reportRange === 'year' || $reportRange === 'all') {
-    for ($i = 11; $i >= 0; $i--) {
-        $month = $todayStart->modify('first day of this month')->sub(new DateInterval('P' . $i . 'M'));
-        $key = $month->format('Y-m');
-        $reportDaySeries[] = [
-            'label' => $month->format('M y'),
-            'revenue' => (float) ($daySeriesMap[$key]['revenue'] ?? 0),
-            'profit' => (float) ($daySeriesMap[$key]['profit'] ?? 0),
-        ];
-    }
-} else {
-    $daysBack = match ($reportRange) {
-        'today' => 0,
-        'week' => 6,
-        default => 29,
-    };
-
-    for ($i = $daysBack; $i >= 0; $i--) {
-        $day = $todayStart->sub(new DateInterval('P' . $i . 'D'));
-        $key = $day->format('Y-m-d');
-        $reportDaySeries[] = [
-            'label' => $day->format('j M'),
-            'revenue' => (float) ($daySeriesMap[$key]['revenue'] ?? 0),
-            'profit' => (float) ($daySeriesMap[$key]['profit'] ?? 0),
-        ];
-    }
-}
-
-$hourlySeriesMap = [];
-foreach ($reportSalesWindow as $sale) {
-    $timestamp = (int) ($sale['_ts'] ?? 0);
-    if ($timestamp <= 0) {
-        continue;
-    }
-
-    $hourKey = date('H', $timestamp);
-    if (!isset($hourlySeriesMap[$hourKey])) {
-        $hourlySeriesMap[$hourKey] = 0.0;
-    }
-    $hourlySeriesMap[$hourKey] += (float) ($sale['amount'] ?? 0);
-}
-
 $reportHourlySeries = [];
-if (count($hourlySeriesMap) > 0) {
-    ksort($hourlySeriesMap);
-    foreach ($hourlySeriesMap as $hour => $value) {
-        $reportHourlySeries[] = [
-            'label' => date('gA', strtotime($hour . ':00')),
-            'value' => (float) $value,
-        ];
-    }
-} else {
-    $reportHourlySeries = [
-        ['label' => '6AM', 'value' => 0],
-        ['label' => '9AM', 'value' => 0],
-        ['label' => '11AM', 'value' => 0],
-        ['label' => '2PM', 'value' => 0],
-        ['label' => '8PM', 'value' => 0],
-    ];
-}
-
-$paymentMap = [];
-foreach ($reportSalesWindow as $sale) {
-    $method = trim((string) ($sale['payment_method'] ?? 'Cash'));
-    if ($method === '') {
-        $method = 'Cash';
-    }
-    if (!isset($paymentMap[$method])) {
-        $paymentMap[$method] = 0.0;
-    }
-    $paymentMap[$method] += (float) ($sale['amount'] ?? 0);
-}
-
 $reportPaymentBreakdown = [];
-foreach ($paymentMap as $method => $amount) {
-    $percentage = $reportRevenueTotal > 0 ? (($amount / $reportRevenueTotal) * 100) : 0;
-    $reportPaymentBreakdown[] = [
-        'method' => $method,
-        'amount' => $amount,
-        'percentage' => $percentage,
-    ];
-}
-usort($reportPaymentBreakdown, static fn(array $a, array $b): int => $b['amount'] <=> $a['amount']);
-
 $reportRangeLabel = (string) ($reportRangeButtons[$reportRange] ?? ucfirst($reportRange));
-$reportAverageTicket = $reportTransactionsTotal > 0
-    ? ($reportRevenueTotal / $reportTransactionsTotal)
-    : 0.0;
-$reportTopPaymentMethod = count($reportPaymentBreakdown) > 0
-    ? (string) ($reportPaymentBreakdown[0]['method'] ?? 'N/A')
-    : 'N/A';
-$reportTopPaymentShare = count($reportPaymentBreakdown) > 0
-    ? (float) ($reportPaymentBreakdown[0]['percentage'] ?? 0)
-    : 0.0;
+$reportAverageTicket = 0.0;
+$reportTopPaymentMethod = 'N/A';
+$reportTopPaymentShare = 0.0;
 $reportGeneratedAt = date('M d, Y H:i');
-
 $reportCashierPerformance = [[
     'name' => $userName,
-    'sales_count' => $reportTransactionsTotal,
-    'revenue' => $reportRevenueTotal,
+    'sales_count' => 0,
+    'revenue' => 0.0,
 ]];
-
 $reportTopProducts = [];
-if ($pdo instanceof PDO) {
-    try {
-        $stmt = $pdo->query(
-            'SELECT p.name AS product_name,
-                    SUM(oi.quantity) AS sold_qty,
-                    SUM(oi.subtotal) AS revenue
-             FROM order_items oi
-             JOIN products p ON p.id = oi.product_id
-             GROUP BY oi.product_id, p.name
-             ORDER BY sold_qty DESC, revenue DESC
-             LIMIT 10'
-        );
-        $rows = $stmt ? $stmt->fetchAll() : [];
-        foreach ($rows as $row) {
-            $reportTopProducts[] = [
-                'name' => (string) ($row['product_name'] ?? ''),
-                'sold_qty' => (int) ($row['sold_qty'] ?? 0),
-                'revenue' => (float) ($row['revenue'] ?? 0),
+
+if ($currentPage === 'reports') {
+    $todayStart = new DateTimeImmutable('today');
+    $rangeStart = match ($reportRange) {
+        'today' => $todayStart,
+        'week' => $todayStart->sub(new DateInterval('P6D')),
+        'month' => $todayStart->sub(new DateInterval('P29D')),
+        'year' => $todayStart->sub(new DateInterval('P364D')),
+        default => null,
+    };
+
+    foreach ($allSales as $sale) {
+        $createdAtRaw = (string) ($sale['created_at'] ?? '');
+        $timestamp = strtotime($createdAtRaw);
+        if ($timestamp === false) {
+            continue;
+        }
+
+        if ($rangeStart instanceof DateTimeImmutable && $timestamp < $rangeStart->getTimestamp()) {
+            continue;
+        }
+
+        $sale['_ts'] = $timestamp;
+        $reportSalesWindow[] = $sale;
+    }
+
+    $reportRevenueTotal = array_reduce(
+        $reportSalesWindow,
+        static fn(float $carry, array $sale): float => $carry + (float) ($sale['amount'] ?? 0),
+        0.0
+    );
+    $reportTransactionsTotal = count($reportSalesWindow);
+    $reportGrossProfit = $reportRevenueTotal * ($reportProfitMargin / 100);
+
+    $daySeriesMap = [];
+    foreach ($reportSalesWindow as $sale) {
+        $timestamp = (int) ($sale['_ts'] ?? 0);
+        if ($timestamp <= 0) {
+            continue;
+        }
+
+        $dayKey = ($reportRange === 'year' || $reportRange === 'all')
+            ? date('Y-m', $timestamp)
+            : date('Y-m-d', $timestamp);
+
+        if (!isset($daySeriesMap[$dayKey])) {
+            $daySeriesMap[$dayKey] = ['revenue' => 0.0, 'profit' => 0.0];
+        }
+
+        $amount = (float) ($sale['amount'] ?? 0);
+        $daySeriesMap[$dayKey]['revenue'] += $amount;
+        $daySeriesMap[$dayKey]['profit'] += $amount * ($reportProfitMargin / 100);
+    }
+
+    if ($reportRange === 'year' || $reportRange === 'all') {
+        for ($i = 11; $i >= 0; $i--) {
+            $month = $todayStart->modify('first day of this month')->sub(new DateInterval('P' . $i . 'M'));
+            $key = $month->format('Y-m');
+            $reportDaySeries[] = [
+                'label' => $month->format('M y'),
+                'revenue' => (float) ($daySeriesMap[$key]['revenue'] ?? 0),
+                'profit' => (float) ($daySeriesMap[$key]['profit'] ?? 0),
             ];
         }
-    } catch (Throwable $exception) {
-        // Fallback below if order_items schema is unavailable.
+    } else {
+        $daysBack = match ($reportRange) {
+            'today' => 0,
+            'week' => 6,
+            default => 29,
+        };
+
+        for ($i = $daysBack; $i >= 0; $i--) {
+            $day = $todayStart->sub(new DateInterval('P' . $i . 'D'));
+            $key = $day->format('Y-m-d');
+            $reportDaySeries[] = [
+                'label' => $day->format('j M'),
+                'revenue' => (float) ($daySeriesMap[$key]['revenue'] ?? 0),
+                'profit' => (float) ($daySeriesMap[$key]['profit'] ?? 0),
+            ];
+        }
     }
-}
 
-if (count($reportTopProducts) === 0) {
-    $fallback = $products;
-    usort($fallback, static fn(array $a, array $b): int => ((float) ($b['unit_price'] ?? 0)) <=> ((float) ($a['unit_price'] ?? 0)));
-    $fallback = array_slice($fallback, 0, 10);
+    $hourlySeriesMap = [];
+    foreach ($reportSalesWindow as $sale) {
+        $timestamp = (int) ($sale['_ts'] ?? 0);
+        if ($timestamp <= 0) {
+            continue;
+        }
 
-    foreach ($fallback as $index => $product) {
-        $soldQty = max(1, 10 - $index);
-        $revenue = $soldQty * (float) ($product['unit_price'] ?? 0);
-        $reportTopProducts[] = [
-            'name' => (string) ($product['name'] ?? 'Product'),
-            'sold_qty' => $soldQty,
-            'revenue' => $revenue,
+        $hourKey = date('H', $timestamp);
+        if (!isset($hourlySeriesMap[$hourKey])) {
+            $hourlySeriesMap[$hourKey] = 0.0;
+        }
+        $hourlySeriesMap[$hourKey] += (float) ($sale['amount'] ?? 0);
+    }
+
+    if (count($hourlySeriesMap) > 0) {
+        ksort($hourlySeriesMap);
+        foreach ($hourlySeriesMap as $hour => $value) {
+            $reportHourlySeries[] = [
+                'label' => date('gA', strtotime($hour . ':00')),
+                'value' => (float) $value,
+            ];
+        }
+    } else {
+        $reportHourlySeries = [
+            ['label' => '6AM', 'value' => 0],
+            ['label' => '9AM', 'value' => 0],
+            ['label' => '11AM', 'value' => 0],
+            ['label' => '2PM', 'value' => 0],
+            ['label' => '8PM', 'value' => 0],
         ];
+    }
+
+    $paymentMap = [];
+    foreach ($reportSalesWindow as $sale) {
+        $method = trim((string) ($sale['payment_method'] ?? 'Cash'));
+        if ($method === '') {
+            $method = 'Cash';
+        }
+        if (!isset($paymentMap[$method])) {
+            $paymentMap[$method] = 0.0;
+        }
+        $paymentMap[$method] += (float) ($sale['amount'] ?? 0);
+    }
+
+    foreach ($paymentMap as $method => $amount) {
+        $percentage = $reportRevenueTotal > 0 ? (($amount / $reportRevenueTotal) * 100) : 0;
+        $reportPaymentBreakdown[] = [
+            'method' => $method,
+            'amount' => $amount,
+            'percentage' => $percentage,
+        ];
+    }
+    usort($reportPaymentBreakdown, static fn(array $a, array $b): int => $b['amount'] <=> $a['amount']);
+
+    $reportAverageTicket = $reportTransactionsTotal > 0
+        ? ($reportRevenueTotal / $reportTransactionsTotal)
+        : 0.0;
+    $reportTopPaymentMethod = count($reportPaymentBreakdown) > 0
+        ? (string) ($reportPaymentBreakdown[0]['method'] ?? 'N/A')
+        : 'N/A';
+    $reportTopPaymentShare = count($reportPaymentBreakdown) > 0
+        ? (float) ($reportPaymentBreakdown[0]['percentage'] ?? 0)
+        : 0.0;
+
+    $reportCashierPerformance = [[
+        'name' => $userName,
+        'sales_count' => $reportTransactionsTotal,
+        'revenue' => $reportRevenueTotal,
+    ]];
+
+    if ($pdo instanceof PDO) {
+        try {
+            $stmt = $pdo->query(
+                'SELECT p.name AS product_name,
+                        SUM(oi.quantity) AS sold_qty,
+                        SUM(oi.subtotal) AS revenue
+                 FROM order_items oi
+                 JOIN products p ON p.id = oi.product_id
+                 GROUP BY oi.product_id, p.name
+                 ORDER BY sold_qty DESC, revenue DESC
+                 LIMIT 10'
+            );
+            $rows = $stmt ? $stmt->fetchAll() : [];
+            foreach ($rows as $row) {
+                $reportTopProducts[] = [
+                    'name' => (string) ($row['product_name'] ?? ''),
+                    'sold_qty' => (int) ($row['sold_qty'] ?? 0),
+                    'revenue' => (float) ($row['revenue'] ?? 0),
+                ];
+            }
+        } catch (Throwable $exception) {
+            // Fallback below if order_items schema is unavailable.
+        }
+    }
+
+    if (count($reportTopProducts) === 0) {
+        $fallback = $products;
+        usort($fallback, static fn(array $a, array $b): int => ((float) ($b['unit_price'] ?? 0)) <=> ((float) ($a['unit_price'] ?? 0)));
+        $fallback = array_slice($fallback, 0, 10);
+
+        foreach ($fallback as $index => $product) {
+            $soldQty = max(1, 10 - $index);
+            $revenue = $soldQty * (float) ($product['unit_price'] ?? 0);
+            $reportTopProducts[] = [
+                'name' => (string) ($product['name'] ?? 'Product'),
+                'sold_qty' => $soldQty,
+                'revenue' => $revenue,
+            ];
+        }
     }
 }
 
@@ -678,6 +740,120 @@ function hasValidCsrfToken(): bool
     return $sessionToken !== '' && $requestToken !== '' && hash_equals($sessionToken, $requestToken);
 }
 
+function getSessionCachedValue(string $key, int $ttlSeconds, callable $resolver): mixed
+{
+    if ($ttlSeconds <= 0) {
+        return $resolver();
+    }
+
+    if (!isset($_SESSION['perf_cache']) || !is_array($_SESSION['perf_cache'])) {
+        $_SESSION['perf_cache'] = [];
+    }
+
+    $now = time();
+    $cache = $_SESSION['perf_cache'];
+    $cached = $cache[$key] ?? null;
+
+    if (is_array($cached)) {
+        $expiresAt = (int) ($cached['expires_at'] ?? 0);
+        if ($expiresAt > $now && array_key_exists('value', $cached)) {
+            return $cached['value'];
+        }
+    }
+
+    $value = $resolver();
+    $cache[$key] = [
+        'expires_at' => $now + $ttlSeconds,
+        'value' => $value,
+    ];
+
+    if (count($cache) > 40) {
+        uasort(
+            $cache,
+            static fn(array $a, array $b): int => ((int) ($a['expires_at'] ?? 0)) <=> ((int) ($b['expires_at'] ?? 0))
+        );
+        $cache = array_slice($cache, -40, null, true);
+    }
+
+    $_SESSION['perf_cache'] = $cache;
+    return $value;
+}
+
+function tableExists(PDO $pdo, string $tableName): bool
+{
+    $stmt = $pdo->prepare(
+        'SELECT COUNT(*) AS total
+         FROM information_schema.tables
+         WHERE table_schema = DATABASE()
+           AND table_name = :table_name'
+    );
+    $stmt->execute([':table_name' => $tableName]);
+    return ((int) ($stmt->fetch()['total'] ?? 0)) === 1;
+}
+
+function indexExists(PDO $pdo, string $tableName, string $indexName): bool
+{
+    $stmt = $pdo->prepare(
+        'SELECT COUNT(*) AS total
+         FROM information_schema.statistics
+         WHERE table_schema = DATABASE()
+           AND table_name = :table_name
+           AND index_name = :index_name'
+    );
+    $stmt->execute([
+        ':table_name' => $tableName,
+        ':index_name' => $indexName,
+    ]);
+    return ((int) ($stmt->fetch()['total'] ?? 0)) > 0;
+}
+
+function ensurePerformanceIndexes(PDO $pdo): void
+{
+    static $ensured = false;
+    if ($ensured) {
+        return;
+    }
+
+    if (tableExists($pdo, 'sales')) {
+        if (!indexExists($pdo, 'sales', 'idx_sales_created_at')) {
+            $pdo->exec('ALTER TABLE sales ADD INDEX idx_sales_created_at (created_at)');
+        }
+        if (!indexExists($pdo, 'sales', 'idx_sales_payment_created')) {
+            $pdo->exec('ALTER TABLE sales ADD INDEX idx_sales_payment_created (payment_method, created_at)');
+        }
+        if (!indexExists($pdo, 'sales', 'idx_sales_customer_created')) {
+            $pdo->exec('ALTER TABLE sales ADD INDEX idx_sales_customer_created (customer_id, created_at)');
+        }
+    }
+
+    if (tableExists($pdo, 'products')) {
+        $columnStmt = $pdo->prepare(
+            'SELECT COUNT(*) AS total
+             FROM information_schema.columns
+             WHERE table_schema = DATABASE()
+               AND table_name = "products"
+               AND column_name = "category"'
+        );
+        $columnStmt->execute();
+        $hasCategory = ((int) ($columnStmt->fetch()['total'] ?? 0)) === 1;
+
+        if ($hasCategory && !indexExists($pdo, 'products', 'idx_products_category')) {
+            $pdo->exec('ALTER TABLE products ADD INDEX idx_products_category (category)');
+        }
+    }
+
+    if (tableExists($pdo, 'security_audit_logs')) {
+        if (!indexExists($pdo, 'security_audit_logs', 'idx_security_status_created')) {
+            $pdo->exec('ALTER TABLE security_audit_logs ADD INDEX idx_security_status_created (event_status, created_at)');
+        }
+        if (!indexExists($pdo, 'security_audit_logs', 'idx_security_identifier_created')) {
+            $pdo->exec('ALTER TABLE security_audit_logs ADD INDEX idx_security_identifier_created (login_identifier, created_at)');
+        }
+    }
+
+    $ensured = true;
+}
+
 function isInventoryImportRequest(): bool
 {
     return ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST'
@@ -709,6 +885,7 @@ function resolveEntityPageKey(string $entity): ?string
     $map = [
         'sale' => 'sales',
         'product' => 'inventory',
+        'product_delete' => 'inventory',
         'customer' => 'customers',
         'customer_delete' => 'customers',
         'customer_payment' => 'customers',
@@ -752,6 +929,11 @@ function canManageEntityRequest(string $entity, string $userRole): bool
     }
 
     return canAccessPage($pageKey, $userRole);
+}
+
+function canManageProducts(string $userRole): bool
+{
+    return strtolower(trim($userRole)) === 'admin';
 }
 
 function normalizeUserRoleInput(string $rawRole): ?string
@@ -1674,6 +1856,10 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                 ];
 
             case 'product':
+                if (!canManageProducts($userRole)) {
+                    throw new RuntimeException('Only administrators can add products.');
+                }
+
                 (new InventoryRepository($pdo))->createProduct([
                     'name' => (string) ($_POST['name'] ?? ''),
                     'sku' => (string) ($_POST['sku'] ?? ''),
@@ -1914,6 +2100,10 @@ function handleEntityUpdate(PDO $pdo, string $currentPage, string $userRole): ar
                     throw new RuntimeException('Product updates are only allowed from the inventory page.');
                 }
 
+                if (!canManageProducts($userRole)) {
+                    throw new RuntimeException('Only administrators can edit products.');
+                }
+
                 $productId = (int) ($_POST['id'] ?? 0);
                 if ($productId <= 0) {
                     throw new RuntimeException('Invalid product ID.');
@@ -1929,6 +2119,27 @@ function handleEntityUpdate(PDO $pdo, string $currentPage, string $userRole): ar
                 ]);
 
                 return ['type' => 'success', 'message' => 'Product updated successfully.'];
+
+            case 'product_delete':
+                if ($currentPage !== 'inventory') {
+                    throw new RuntimeException('Product deletions are only allowed from the inventory page.');
+                }
+
+                if (!canManageProducts($userRole)) {
+                    throw new RuntimeException('Only administrators can delete products.');
+                }
+
+                $productId = (int) ($_POST['id'] ?? 0);
+                if ($productId <= 0) {
+                    throw new RuntimeException('Invalid product ID.');
+                }
+
+                $deleted = (new InventoryRepository($pdo))->deleteProduct($productId);
+                if (!$deleted) {
+                    throw new RuntimeException('Could not delete product.');
+                }
+
+                return ['type' => 'success', 'message' => 'Product deleted successfully.'];
 
             case 'customer':
                 if ($currentPage !== 'customers') {
@@ -2744,7 +2955,7 @@ function buildProductRowsFromCsv(string $csvFilePath): array
 
 function handleProductImport(InventoryRepository $inventoryRepo, string $userRole): array
 {
-    if (!canAccessPage('inventory', $userRole)) {
+    if (!canManageProducts($userRole)) {
         try {
             $pdo = getDatabaseConnection();
             logSecurityAuditEvent('inventory_import_denied', 'denied', '', ['role' => $userRole], $pdo);
@@ -2754,7 +2965,7 @@ function handleProductImport(InventoryRepository $inventoryRepo, string $userRol
 
         return [
             'type' => 'error',
-            'message' => 'You are not allowed to import products.',
+            'message' => 'Only administrators can import products.',
         ];
     }
 
@@ -3240,15 +3451,19 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                         </p>
                     </div>
                     <div class="page-actions">
-                        <button class="btn btn-secondary" data-action="showImportProductsModal">
-                            <i class="fa-solid fa-file-import"></i> Import Excel
-                        </button>
+                        <?php if ($canManageProducts): ?>
+                            <button class="btn btn-secondary" data-action="showImportProductsModal">
+                                <i class="fa-solid fa-file-import"></i> Import Excel
+                            </button>
+                        <?php endif; ?>
                         <a class="btn btn-secondary" href="export_products_xlsx.php">
                             <i class="fa-solid fa-file-export"></i> Export XLSX
                         </a>
-                        <button class="btn btn-primary" data-action="showAddProductModal">
-                            <i class="fa-solid fa-plus"></i> Add Product
-                        </button>
+                        <?php if ($canManageProducts): ?>
+                            <button class="btn btn-primary" data-action="showAddProductModal">
+                                <i class="fa-solid fa-plus"></i> Add Product
+                            </button>
+                        <?php endif; ?>
                     </div>
                 </div>
 
@@ -3287,10 +3502,10 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                     <div class="table-header inventory-table-header">
                         <div class="search-box">
                             <i class="fa-solid fa-search"></i>
-                            <input type="text" id="productSearch" placeholder="Search products..." onkeyup="filterTable('productTable', this.value)">
+                            <input type="text" id="productSearch" placeholder="Search products...">
                         </div>
                         <div class="table-filters">
-                            <select onchange="filterByStock(this.value)">
+                            <select id="productStockFilter">
                                 <option value="all">All Products</option>
                                 <option value="low">Low Stock Only</option>
                                 <option value="ok">In Stock</option>
@@ -3309,7 +3524,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                 }
                                 ksort($inventoryCategories);
                             ?>
-                            <select onchange="filterByCategory(this.value)">
+                            <select id="productCategoryFilter">
                                 <option value="all">All Categories</option>
                                 <?php foreach ($inventoryCategories as $inventoryCategoryKey => $inventoryCategoryName): ?>
                                     <option value="<?= e($inventoryCategoryKey) ?>"><?= e($inventoryCategoryName) ?></option>
@@ -3317,7 +3532,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                             </select>
                         </div>
                         <div class="inventory-visible-indicator">
-                            Showing <strong id="inventoryVisibleCount"><?= moneyFormat($inventoryProductCount) ?></strong>
+                            Showing <strong id="inventoryVisibleCount"><?= moneyFormat($inventoryVisibleInitialCount) ?></strong>
                         </div>
                     </div>
                     <table class="data-table" id="productTable">
@@ -3354,12 +3569,16 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                         <?php endif; ?>
                                     </td>
                                     <td>
-                                        <button class="btn-icon" data-action="editProduct" data-value="<?= (int) $product['id'] ?>" title="Edit">
-                                            <i class="fa-solid fa-pen"></i>
-                                        </button>
-                                        <button class="btn-icon danger" data-action="deleteProduct" data-value="<?= (int) $product['id'] ?>" title="Delete">
-                                            <i class="fa-solid fa-trash"></i>
-                                        </button>
+                                        <?php if ($canManageProducts): ?>
+                                            <button class="btn-icon" data-action="editProduct" data-value="<?= (int) $product['id'] ?>" title="Edit">
+                                                <i class="fa-solid fa-pen"></i>
+                                            </button>
+                                        <?php endif; ?>
+                                        <?php if ($canManageProducts): ?>
+                                            <button class="btn-icon danger" data-action="deleteProduct" data-value="<?= (int) $product['id'] ?>" title="Delete">
+                                                <i class="fa-solid fa-trash"></i>
+                                            </button>
+                                        <?php endif; ?>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
@@ -3369,6 +3588,22 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                         <i class="fa-regular fa-folder-open"></i>
                         <span>No products match your current filters.</span>
                     </div>
+
+                    <?php if ($inventoryPageCount > 1): ?>
+                        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:12px; flex-wrap:wrap;">
+                            <div style="color:#6b7280; font-size:13px;">
+                                Page <?= moneyFormat($inventoryPage) ?> of <?= moneyFormat($inventoryPageCount) ?>
+                            </div>
+                            <div style="display:flex; gap:8px;">
+                                <?php if ($inventoryPage > 1): ?>
+                                    <a class="btn btn-secondary" href="?page=inventory&inv_page=<?= $inventoryPage - 1 ?>">Previous</a>
+                                <?php endif; ?>
+                                <?php if ($inventoryPage < $inventoryPageCount): ?>
+                                    <a class="btn btn-secondary" href="?page=inventory&inv_page=<?= $inventoryPage + 1 ?>">Next</a>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    <?php endif; ?>
                 </div>
             </section>
 
@@ -3397,7 +3632,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                     <div class="table-header">
                         <div class="search-box">
                             <i class="fa-solid fa-search"></i>
-                            <input type="text" id="customerSearch" placeholder="Search customers..." onkeyup="filterTable('customerTable', this.value)">
+                            <input type="text" id="customerSearch" placeholder="Search customers...">
                         </div>
                     </div>
                     <table class="data-table" id="customerTable">
@@ -3683,10 +3918,10 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                         <div class="table-header">
                             <div class="search-box">
                                 <i class="fa-solid fa-search"></i>
-                                <input type="text" id="salesSearch" placeholder="Search transactions..." onkeyup="filterTable('salesTable', this.value)">
+                                <input type="text" id="salesSearch" placeholder="Search transactions...">
                             </div>
                             <div class="table-filters">
-                                <select id="salesPaymentFilter" onchange="filterByPayment('salesTable', this.value)">
+                                <select id="salesPaymentFilter">
                                     <option value="all">All Payments</option>
                                     <option value="cash">Cash</option>
                                     <option value="mobile">Mobile Money</option>
@@ -5155,14 +5390,14 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
 
                 <div class="data-table-container">
                     <div class="table-header" style="display:block;">
-                        <form method="get" action="" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                        <form method="get" action="" id="securityLogsFilterForm" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                             <input type="hidden" name="page" value="security-logs">
                             <div class="search-box" style="max-width:380px;">
                                 <i class="fa-solid fa-search"></i>
                                 <input type="text" name="q" value="<?= e($securityLogsSearch) ?>" placeholder="Search event, login, or IP...">
                             </div>
                             <div class="table-filters">
-                                <select name="status" onchange="this.form.submit()">
+                                <select id="securityLogsStatusFilter" name="status">
                                     <?php foreach (['all' => 'All Status', 'success' => 'Success', 'failed' => 'Failed', 'blocked' => 'Blocked', 'denied' => 'Denied', 'error' => 'Error'] as $statusKey => $statusLabel): ?>
                                         <option value="<?= e($statusKey) ?>" <?= $securityLogsStatusFilter === $statusKey ? 'selected' : '' ?>><?= e($statusLabel) ?></option>
                                     <?php endforeach; ?>
@@ -5472,15 +5707,18 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
     'saleProducts' => $saleProductOptions,
     'checkoutPaymentOptions' => getAvailableCheckoutPaymentOptions($storeSettings),
     'flashReceipt' => is_array($flashReceipt) ? $flashReceipt : null,
-    'inventoryProducts' => array_map(static fn(array $item) => [
-        'id' => (int) ($item['id'] ?? 0),
-        'name' => (string) ($item['name'] ?? ''),
-        'sku' => (string) ($item['sku'] ?? ''),
-        'category' => (string) ($item['category'] ?? ''),
-        'stock_qty' => (int) ($item['stock_qty'] ?? 0),
-        'reorder_level' => (int) ($item['reorder_level'] ?? 5),
-        'unit_price' => (float) ($item['unit_price'] ?? 0),
-    ], $products),
+    'canManageProducts' => $canManageProducts,
+    'inventoryProducts' => $currentPage === 'inventory'
+        ? array_map(static fn(array $item) => [
+            'id' => (int) ($item['id'] ?? 0),
+            'name' => (string) ($item['name'] ?? ''),
+            'sku' => (string) ($item['sku'] ?? ''),
+            'category' => (string) ($item['category'] ?? ''),
+            'stock_qty' => (int) ($item['stock_qty'] ?? 0),
+            'reorder_level' => (int) ($item['reorder_level'] ?? 5),
+            'unit_price' => (float) ($item['unit_price'] ?? 0),
+        ], $products)
+        : [],
     'poProducts' => array_map(static fn(array $item) => [
         'id' => (int) ($item['id'] ?? 0),
         'name' => (string) ($item['name'] ?? ''),
@@ -5581,6 +5819,6 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
         'created_at' => (string) ($item['created_at'] ?? ''),
     ], $customerCredits),
 ], JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
-<script src="assets/js/dashboard.js"></script>
+<script src="assets/js/dashboard.js?v=<?= urlencode((string) @filemtime(__DIR__ . '/assets/js/dashboard.js')) ?>"></script>
 </body>
 </html>
