@@ -166,6 +166,7 @@ $customerOutstandingTotals = [];
 $customerCreditPayments = [];
 $customerCreditSaleItems = [];
 $debtAddProductOptions = [];
+$deletedCustomerCredits = [];
 $securityAuditLogs = [];
 $securityLogsStatusFilter = strtolower(trim((string) ($_GET['status'] ?? 'all')));
 if (!in_array($securityLogsStatusFilter, ['all', 'success', 'failed', 'blocked', 'denied', 'error'], true)) {
@@ -470,6 +471,10 @@ try {
             'stock_qty' => (int) ($item['stock_qty'] ?? 0),
             'unit_price' => (float) ($item['unit_price'] ?? 0),
         ], $debtAddProductRows);
+
+        if (canManageProducts($userRole)) {
+            $deletedCustomerCredits = $customerCreditRepo->getDeletedCredits(120);
+        }
     }
     $storeSettings = getStoreSettings($pdo, $storeSettings);
 
@@ -947,6 +952,8 @@ function resolveEntityPageKey(string $entity): ?string
         'customer_payment' => 'customers',
         'customer_debt_add_item' => 'customers',
         'customer_debt_remove_item' => 'customers',
+        'customer_debt_delete' => 'customers',
+        'customer_debt_restore' => 'customers',
         'supplier' => 'suppliers',
         'supplier_delete' => 'suppliers',
         'employee' => 'employees',
@@ -1050,6 +1057,18 @@ function ensureCustomerCreditTables(PDO $pdo): void
     $dueDateColumnCheck->execute();
     if ((int) ($dueDateColumnCheck->fetch()['total'] ?? 0) === 0) {
         $pdo->exec('ALTER TABLE customer_credits ADD COLUMN due_date DATE NULL AFTER status');
+    }
+
+    $deletedAtColumnCheck = $pdo->prepare(
+        'SELECT COUNT(*) AS total
+         FROM information_schema.columns
+         WHERE table_schema = DATABASE()
+           AND table_name = "customer_credits"
+           AND column_name = "deleted_at"'
+    );
+    $deletedAtColumnCheck->execute();
+    if ((int) ($deletedAtColumnCheck->fetch()['total'] ?? 0) === 0) {
+        $pdo->exec('ALTER TABLE customer_credits ADD COLUMN deleted_at DATETIME NULL AFTER notes');
     }
 
     $pdo->exec(
@@ -2059,7 +2078,8 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                     $creditStmt = $pdo->prepare(
                         'SELECT id, sale_id, customer_id, total_amount, paid_amount, outstanding_amount, status
                          FROM customer_credits
-                         WHERE id = :id
+                                                 WHERE id = :id
+                                                     AND deleted_at IS NULL
                          FOR UPDATE'
                     );
                     $creditStmt->execute([':id' => $creditId]);
@@ -2160,8 +2180,7 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                             'Added %d product line(s). Debt updated by Tsh %s. New outstanding: Tsh %s.',
                             $addedLineCount,
                             moneyFormat($addedAmountTotal),
-                            moneyFormat($newOutstanding),
-                            ''
+                            moneyFormat($newOutstanding)
                         ),
                     ];
                 } catch (Throwable $exception) {
@@ -2188,7 +2207,8 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                     $creditStmt = $pdo->prepare(
                         'SELECT id, sale_id, total_amount, paid_amount
                          FROM customer_credits
-                         WHERE id = :id
+                                                 WHERE id = :id
+                                                     AND deleted_at IS NULL
                          FOR UPDATE'
                     );
                     $creditStmt->execute([':id' => $creditId]);
@@ -2283,6 +2303,46 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                     }
                     throw $exception;
                 }
+
+            case 'customer_debt_delete':
+                if ($currentPage !== 'customers') {
+                    throw new RuntimeException('Debt updates are only allowed from the customers page.');
+                }
+                if (!canManageProducts($userRole)) {
+                    throw new RuntimeException('Only administrators can delete debt ledger records.');
+                }
+
+                $creditId = (int) ($_POST['credit_id'] ?? 0);
+                if ($creditId <= 0) {
+                    throw new RuntimeException('Valid debt record is required.');
+                }
+
+                $deleted = (new CustomerCreditRepository($pdo))->softDeleteCredit($creditId);
+                if (!$deleted) {
+                    throw new RuntimeException('Debt record could not be deleted or is already deleted.');
+                }
+
+                return ['type' => 'success', 'message' => 'Debt ledger record deleted. You can restore it from Deleted Debt Records.'];
+
+            case 'customer_debt_restore':
+                if ($currentPage !== 'customers') {
+                    throw new RuntimeException('Debt updates are only allowed from the customers page.');
+                }
+                if (!canManageProducts($userRole)) {
+                    throw new RuntimeException('Only administrators can restore debt ledger records.');
+                }
+
+                $creditId = (int) ($_POST['credit_id'] ?? 0);
+                if ($creditId <= 0) {
+                    throw new RuntimeException('Valid debt record is required.');
+                }
+
+                $restored = (new CustomerCreditRepository($pdo))->restoreCredit($creditId);
+                if (!$restored) {
+                    throw new RuntimeException('Debt record could not be restored or is already active.');
+                }
+
+                return ['type' => 'success', 'message' => 'Debt ledger record restored successfully.'];
 
             case 'product':
                 if (!canManageProducts($userRole)) {
@@ -4019,16 +4079,43 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                     </div>
 
                     <?php if ($inventoryPageCount > 1): ?>
-                        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:12px; flex-wrap:wrap;">
-                            <div style="color:#6b7280; font-size:13px;">
-                                Page <?= moneyFormat($inventoryPage) ?> of <?= moneyFormat($inventoryPageCount) ?>
+                        <?php
+                            $inventoryStart = max(1, $inventoryPage - 2);
+                            $inventoryEnd = min($inventoryPageCount, $inventoryPage + 2);
+                        ?>
+                        <div class="pager-bar">
+                            <div class="pager-meta">
+                                <span class="pager-chip">Page <?= moneyFormat($inventoryPage) ?> of <?= moneyFormat($inventoryPageCount) ?></span>
                             </div>
-                            <div style="display:flex; gap:8px;">
+                            <div class="pager-controls">
                                 <?php if ($inventoryPage > 1): ?>
-                                    <a class="btn btn-secondary" href="?page=inventory&inv_page=<?= $inventoryPage - 1 ?>">Previous</a>
+                                    <a class="pager-btn" href="?page=inventory&inv_page=<?= $inventoryPage - 1 ?>"><i class="fa-solid fa-chevron-left"></i> Previous</a>
                                 <?php endif; ?>
+
+                                <?php if ($inventoryStart > 1): ?>
+                                    <a class="pager-btn pager-number" href="?page=inventory&inv_page=1">1</a>
+                                    <?php if ($inventoryStart > 2): ?>
+                                        <span class="pager-ellipsis">...</span>
+                                    <?php endif; ?>
+                                <?php endif; ?>
+
+                                <?php for ($i = $inventoryStart; $i <= $inventoryEnd; $i++): ?>
+                                    <?php if ($i === $inventoryPage): ?>
+                                        <span class="pager-btn pager-number current"><?= moneyFormat($i) ?></span>
+                                    <?php else: ?>
+                                        <a class="pager-btn pager-number" href="?page=inventory&inv_page=<?= $i ?>"><?= moneyFormat($i) ?></a>
+                                    <?php endif; ?>
+                                <?php endfor; ?>
+
+                                <?php if ($inventoryEnd < $inventoryPageCount): ?>
+                                    <?php if ($inventoryEnd < $inventoryPageCount - 1): ?>
+                                        <span class="pager-ellipsis">...</span>
+                                    <?php endif; ?>
+                                    <a class="pager-btn pager-number" href="?page=inventory&inv_page=<?= $inventoryPageCount ?>"><?= moneyFormat($inventoryPageCount) ?></a>
+                                <?php endif; ?>
+
                                 <?php if ($inventoryPage < $inventoryPageCount): ?>
-                                    <a class="btn btn-secondary" href="?page=inventory&inv_page=<?= $inventoryPage + 1 ?>">Next</a>
+                                    <a class="pager-btn" href="?page=inventory&inv_page=<?= $inventoryPage + 1 ?>">Next <i class="fa-solid fa-chevron-right"></i></a>
                                 <?php endif; ?>
                             </div>
                         </div>
@@ -4267,6 +4354,11 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                                     <i class="fa-solid fa-basket-shopping"></i>
                                                 </button>
                                             <?php endif; ?>
+                                            <?php if (canManageProducts($userRole)): ?>
+                                                <button class="btn-icon danger" data-action="deleteCustomerDebtRecord" data-value="<?= (int) ($credit['id'] ?? 0) ?>" data-customer-name="<?= e((string) ($credit['customer_name'] ?? 'Customer')) ?>" title="Delete Debt Record">
+                                                    <i class="fa-solid fa-trash"></i>
+                                                </button>
+                                            <?php endif; ?>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>
@@ -4283,17 +4375,43 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                 ? (($customerDebtPage - 1) * $customerDebtPerPage) + 1
                                 : 0;
                             $customerDebtRangeEnd = min($customerDebtTotalCount, $customerDebtPage * $customerDebtPerPage);
+                            $customerDebtStart = max(1, $customerDebtPage - 2);
+                            $customerDebtEnd = min($customerDebtPageCount, $customerDebtPage + 2);
                         ?>
-                        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:12px; flex-wrap:wrap;">
-                            <div style="color:#6b7280; font-size:13px;">
-                                Showing <?= moneyFormat($customerDebtRangeStart) ?>-<?= moneyFormat($customerDebtRangeEnd) ?> of <?= moneyFormat($customerDebtTotalCount) ?> debt records (Page <?= moneyFormat($customerDebtPage) ?> of <?= moneyFormat($customerDebtPageCount) ?>)
+                        <div class="pager-bar">
+                            <div class="pager-meta">
+                                <span>Showing <?= moneyFormat($customerDebtRangeStart) ?>-<?= moneyFormat($customerDebtRangeEnd) ?> of <?= moneyFormat($customerDebtTotalCount) ?> debt records</span>
+                                <span class="pager-chip">Page <?= moneyFormat($customerDebtPage) ?> of <?= moneyFormat($customerDebtPageCount) ?></span>
                             </div>
-                            <div style="display:flex; gap:8px;">
+                            <div class="pager-controls">
                                 <?php if ($customerDebtPage > 1): ?>
-                                    <a class="btn btn-secondary" href="<?= $customerDebtBaseQuery ?>&debt_page=<?= $customerDebtPage - 1 ?>">Previous</a>
+                                    <a class="pager-btn" href="<?= $customerDebtBaseQuery ?>&debt_page=<?= $customerDebtPage - 1 ?>"><i class="fa-solid fa-chevron-left"></i> Previous</a>
                                 <?php endif; ?>
+
+                                <?php if ($customerDebtStart > 1): ?>
+                                    <a class="pager-btn pager-number" href="<?= $customerDebtBaseQuery ?>&debt_page=1">1</a>
+                                    <?php if ($customerDebtStart > 2): ?>
+                                        <span class="pager-ellipsis">...</span>
+                                    <?php endif; ?>
+                                <?php endif; ?>
+
+                                <?php for ($i = $customerDebtStart; $i <= $customerDebtEnd; $i++): ?>
+                                    <?php if ($i === $customerDebtPage): ?>
+                                        <span class="pager-btn pager-number current"><?= moneyFormat($i) ?></span>
+                                    <?php else: ?>
+                                        <a class="pager-btn pager-number" href="<?= $customerDebtBaseQuery ?>&debt_page=<?= $i ?>"><?= moneyFormat($i) ?></a>
+                                    <?php endif; ?>
+                                <?php endfor; ?>
+
+                                <?php if ($customerDebtEnd < $customerDebtPageCount): ?>
+                                    <?php if ($customerDebtEnd < $customerDebtPageCount - 1): ?>
+                                        <span class="pager-ellipsis">...</span>
+                                    <?php endif; ?>
+                                    <a class="pager-btn pager-number" href="<?= $customerDebtBaseQuery ?>&debt_page=<?= $customerDebtPageCount ?>"><?= moneyFormat($customerDebtPageCount) ?></a>
+                                <?php endif; ?>
+
                                 <?php if ($customerDebtPage < $customerDebtPageCount): ?>
-                                    <a class="btn btn-secondary" href="<?= $customerDebtBaseQuery ?>&debt_page=<?= $customerDebtPage + 1 ?>">Next</a>
+                                    <a class="pager-btn" href="<?= $customerDebtBaseQuery ?>&debt_page=<?= $customerDebtPage + 1 ?>">Next <i class="fa-solid fa-chevron-right"></i></a>
                                 <?php endif; ?>
                             </div>
                         </div>
@@ -4303,6 +4421,44 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                         <span>No debt records match this filter.</span>
                     </div>
                 </div>
+
+                <?php if (canManageProducts($userRole) && count($deletedCustomerCredits) > 0): ?>
+                    <div class="data-table-container" style="margin-top:18px;">
+                        <div class="table-header">
+                            <h3 style="margin:0; font-size:16px;">Deleted Debt Records (Admin Recovery)</h3>
+                        </div>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Customer</th>
+                                    <th>Sale Ref</th>
+                                    <th>Total</th>
+                                    <th>Paid</th>
+                                    <th>Outstanding</th>
+                                    <th>Deleted At</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($deletedCustomerCredits as $deletedCredit): ?>
+                                    <tr>
+                                        <td><?= e((string) ($deletedCredit['customer_name'] ?? '')) ?></td>
+                                        <td><code><?= e((string) ($deletedCredit['transaction_no'] ?? ('SALE-' . (int) ($deletedCredit['sale_id'] ?? 0)))) ?></code></td>
+                                        <td>Tsh <?= moneyFormat((float) ($deletedCredit['total_amount'] ?? 0)) ?></td>
+                                        <td>Tsh <?= moneyFormat((float) ($deletedCredit['paid_amount'] ?? 0)) ?></td>
+                                        <td>Tsh <?= moneyFormat((float) ($deletedCredit['outstanding_amount'] ?? 0)) ?></td>
+                                        <td><?= e((string) ($deletedCredit['deleted_at'] ?? '')) ?></td>
+                                        <td>
+                                            <button class="btn-icon" data-action="restoreCustomerDebtRecord" data-value="<?= (int) ($deletedCredit['id'] ?? 0) ?>" data-customer-name="<?= e((string) ($deletedCredit['customer_name'] ?? 'Customer')) ?>" title="Restore Debt Record">
+                                                <i class="fa-solid fa-rotate-left"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php endif; ?>
             </section>
 
         <?php elseif ($currentPage === 'sales' || $currentPage === 'transactions'): ?>

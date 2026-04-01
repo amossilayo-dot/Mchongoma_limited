@@ -1095,6 +1095,18 @@ function initActionBindings() {
       removeCustomerDebtProductLine(parseInt(value, 10), creditId, productName);
       return;
     }
+    if (action === "deleteCustomerDebtRecord") {
+      const customerName =
+        target.getAttribute("data-customer-name") || "Customer";
+      deleteCustomerDebtRecord(parseInt(value, 10), customerName);
+      return;
+    }
+    if (action === "restoreCustomerDebtRecord") {
+      const customerName =
+        target.getAttribute("data-customer-name") || "Customer";
+      restoreCustomerDebtRecord(parseInt(value, 10), customerName);
+      return;
+    }
 
     if (action === "viewReceipt") {
       viewReceipt(value);
@@ -6308,6 +6320,75 @@ function removeCustomerDebtProductLine(
       text: "Remove",
       class: "btn-danger",
       onclick: 'document.getElementById("removeDebtLineForm").requestSubmit()',
+    },
+  ]);
+}
+
+function deleteCustomerDebtRecord(id, customerName = "Customer") {
+  const creditId = Number.parseInt(id, 10);
+  if (!Number.isFinite(creditId) || creditId <= 0) {
+    showToast("error", "Invalid debt record");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const safeName = escapeHtml(String(customerName || "Customer"));
+  const content = `
+    <form id="deleteDebtRecordForm" method="POST" action="?page=customers">
+      <input type="hidden" name="action" value="create_entity">
+      <input type="hidden" name="entity" value="customer_debt_delete">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <input type="hidden" name="credit_id" value="${escapeHtml(String(creditId))}">
+      <div style="text-align:center; padding:8px 0 4px;">
+        <i class="fa-solid fa-triangle-exclamation" style="font-size:34px; color:#f59e0b; margin-bottom:10px;"></i>
+        <p style="margin:0; font-size:15px;">Delete this debt ledger record?</p>
+        <p style="margin:8px 0 0; color:#6b7280;">${safeName}</p>
+        <p style="margin:6px 0 0; color:#6b7280; font-size:12px;">This is recoverable from Deleted Debt Records.</p>
+      </div>
+    </form>
+  `;
+
+  openModal("Delete Debt Record", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: "Delete",
+      class: "btn-danger",
+      onclick:
+        'document.getElementById("deleteDebtRecordForm").requestSubmit()',
+    },
+  ]);
+}
+
+function restoreCustomerDebtRecord(id, customerName = "Customer") {
+  const creditId = Number.parseInt(id, 10);
+  if (!Number.isFinite(creditId) || creditId <= 0) {
+    showToast("error", "Invalid debt record");
+    return;
+  }
+
+  const csrfToken = escapeHtml(APP_CONFIG.csrfToken || "");
+  const safeName = escapeHtml(String(customerName || "Customer"));
+  const content = `
+    <form id="restoreDebtRecordForm" method="POST" action="?page=customers">
+      <input type="hidden" name="action" value="create_entity">
+      <input type="hidden" name="entity" value="customer_debt_restore">
+      <input type="hidden" name="csrf_token" value="${csrfToken}">
+      <input type="hidden" name="credit_id" value="${escapeHtml(String(creditId))}">
+      <div style="text-align:center; padding:8px 0 4px;">
+        <i class="fa-solid fa-rotate-left" style="font-size:34px; color:#16a34a; margin-bottom:10px;"></i>
+        <p style="margin:0; font-size:15px;">Restore this debt ledger record?</p>
+        <p style="margin:8px 0 0; color:#6b7280;">${safeName}</p>
+      </div>
+    </form>
+  `;
+
+  openModal("Restore Debt Record", content, [
+    { text: "Cancel", class: "btn-secondary", onclick: "closeModal()" },
+    {
+      text: "Restore",
+      class: "btn-primary",
+      onclick:
+        'document.getElementById("restoreDebtRecordForm").requestSubmit()',
     },
   ]);
 }

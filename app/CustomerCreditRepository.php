@@ -74,10 +74,11 @@ final class CustomerCreditRepository
                        s.transaction_no
                 FROM customer_credits cc
                 JOIN customers c ON c.id = cc.customer_id
-                LEFT JOIN sales s ON s.id = cc.sale_id';
+                LEFT JOIN sales s ON s.id = cc.sale_id
+                WHERE cc.deleted_at IS NULL';
 
         if ($openOnly) {
-            $sql .= " WHERE cc.outstanding_amount > 0 AND cc.status <> 'Paid'";
+            $sql .= " AND cc.outstanding_amount > 0 AND cc.status <> 'Paid'";
         }
 
         $sql .= ' ORDER BY cc.created_at DESC LIMIT :limit';
@@ -102,10 +103,11 @@ final class CustomerCreditRepository
                        s.transaction_no
                 FROM customer_credits cc
                 JOIN customers c ON c.id = cc.customer_id
-                LEFT JOIN sales s ON s.id = cc.sale_id';
+                LEFT JOIN sales s ON s.id = cc.sale_id
+                WHERE cc.deleted_at IS NULL';
 
         if ($normalized !== '') {
-            $sql .= ' WHERE (
+            $sql .= ' AND (
                         c.name LIKE :search
                         OR COALESCE(c.phone, "") LIKE :search
                         OR COALESCE(s.transaction_no, "") LIKE :search
@@ -142,10 +144,11 @@ final class CustomerCreditRepository
         $sql = 'SELECT COUNT(*) AS total
                 FROM customer_credits cc
                 JOIN customers c ON c.id = cc.customer_id
-                LEFT JOIN sales s ON s.id = cc.sale_id';
+                LEFT JOIN sales s ON s.id = cc.sale_id
+                WHERE cc.deleted_at IS NULL';
 
         if ($normalized !== '') {
-            $sql .= ' WHERE (
+            $sql .= ' AND (
                         c.name LIKE :search
                         OR COALESCE(c.phone, "") LIKE :search
                         OR COALESCE(s.transaction_no, "") LIKE :search
@@ -193,7 +196,8 @@ final class CustomerCreditRepository
                 FROM customer_credits cc
                 JOIN customers c ON c.id = cc.customer_id
                 LEFT JOIN sales s ON s.id = cc.sale_id
-                WHERE cc.customer_id = :customer_id';
+                                WHERE cc.customer_id = :customer_id
+                                    AND cc.deleted_at IS NULL';
 
         if ($openOnly) {
             $sql .= ' AND cc.outstanding_amount > 0 AND cc.status <> "Paid"';
@@ -238,7 +242,9 @@ final class CustomerCreditRepository
         $stmt = $this->pdo->query(
             'SELECT customer_id, COALESCE(SUM(outstanding_amount), 0) AS outstanding_total
              FROM customer_credits
-             WHERE outstanding_amount > 0 AND status <> "Paid"
+                         WHERE deleted_at IS NULL
+                             AND outstanding_amount > 0
+                             AND status <> "Paid"
              GROUP BY customer_id'
         );
 
@@ -340,7 +346,8 @@ final class CustomerCreditRepository
             $creditStmt = $this->pdo->prepare(
                 'SELECT id, customer_id, total_amount, paid_amount, outstanding_amount
                  FROM customer_credits
-                 WHERE id = :id
+                                 WHERE id = :id
+                                     AND deleted_at IS NULL
                  FOR UPDATE'
             );
             $creditStmt->execute([':id' => $creditId]);
@@ -404,5 +411,63 @@ final class CustomerCreditRepository
             }
             throw $exception;
         }
+    }
+
+    public function softDeleteCredit(int $creditId): bool
+    {
+        if ($creditId <= 0) {
+            throw new InvalidArgumentException('Valid credit ID is required.');
+        }
+
+        $stmt = $this->pdo->prepare(
+            'UPDATE customer_credits
+             SET deleted_at = NOW(),
+                 updated_at = NOW()
+             WHERE id = :id
+               AND deleted_at IS NULL'
+        );
+        $stmt->execute([':id' => $creditId]);
+
+        return $stmt->rowCount() > 0;
+    }
+
+    public function restoreCredit(int $creditId): bool
+    {
+        if ($creditId <= 0) {
+            throw new InvalidArgumentException('Valid credit ID is required.');
+        }
+
+        $stmt = $this->pdo->prepare(
+            'UPDATE customer_credits
+             SET deleted_at = NULL,
+                 updated_at = NOW()
+             WHERE id = :id
+               AND deleted_at IS NOT NULL'
+        );
+        $stmt->execute([':id' => $creditId]);
+
+        return $stmt->rowCount() > 0;
+    }
+
+    public function getDeletedCredits(int $limit = 100): array
+    {
+        $limit = max(1, min($limit, 1000));
+        $stmt = $this->pdo->prepare(
+            'SELECT cc.id, cc.sale_id, cc.customer_id, cc.total_amount, cc.paid_amount,
+                    cc.outstanding_amount, cc.status, cc.due_date, cc.notes, cc.created_at, cc.updated_at,
+                    cc.deleted_at,
+                    c.name AS customer_name,
+                    s.transaction_no
+             FROM customer_credits cc
+             JOIN customers c ON c.id = cc.customer_id
+             LEFT JOIN sales s ON s.id = cc.sale_id
+             WHERE cc.deleted_at IS NOT NULL
+             ORDER BY cc.deleted_at DESC
+             LIMIT :limit'
+        );
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+
+        return $stmt->fetchAll();
     }
 }

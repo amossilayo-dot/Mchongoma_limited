@@ -1529,6 +1529,86 @@ body {
   color: #1f5f90;
 }
 
+.pager-bar {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #d7e2ee;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pager-meta {
+  color: #5d6f82;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pager-chip {
+  padding: 4px 10px;
+  border: 1px solid #d2deea;
+  border-radius: 999px;
+  background: #eef4fb;
+  color: #284b70;
+  font-weight: 600;
+}
+
+.pager-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.pager-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid #ccd9e7;
+  background: #f3f7fd;
+  color: #2f4f73;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 13px;
+  transition:
+    background var(--transition-base),
+    border-color var(--transition-base),
+    transform var(--transition-fast);
+}
+
+.pager-btn:hover {
+  background: #eaf2fb;
+  border-color: #aac2dd;
+  transform: translateY(-1px);
+}
+
+.pager-number {
+  min-width: 36px;
+  justify-content: center;
+  padding: 0 10px;
+}
+
+.pager-number.current {
+  background: #2f4f73;
+  border-color: #2f4f73;
+  color: #ffffff;
+}
+
+.pager-ellipsis {
+  color: #7a8da3;
+  font-weight: 600;
+  padding: 0 2px;
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -2111,6 +2191,19 @@ body {
 
   .debt-ledger-clear-btn {
     height: 38px;
+  }
+
+  .pager-bar {
+    align-items: stretch;
+  }
+
+  .pager-meta {
+    width: 100%;
+  }
+
+  .pager-controls {
+    width: 100%;
+    justify-content: flex-end;
   }
 }
 
