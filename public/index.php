@@ -1680,6 +1680,19 @@ function handleEntityCreate(PDO $pdo, string $currentPage, string $userName, str
                 if ($customerId <= 0) {
                     throw new RuntimeException('Customer is required for a sale.');
                 }
+
+                if ($isCreditSale) {
+                    $selectedCustomer = (new CustomerRepository($pdo))->getCustomer($customerId);
+                    if (!is_array($selectedCustomer)) {
+                        throw new RuntimeException('Selected customer was not found.');
+                    }
+
+                    $selectedCustomerName = strtolower(trim((string) ($selectedCustomer['name'] ?? '')));
+                    if ($selectedCustomerName === 'walk-in customer') {
+                        throw new RuntimeException('Pay Later requires a named customer. Please select a customer other than Walk-in Customer.');
+                    }
+                }
+
                 if (count($cartItemsInput) === 0) {
                     throw new RuntimeException('Select at least one product for checkout.');
                 }
@@ -3753,12 +3766,13 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                 <th>Due Date</th>
                                 <th>Status</th>
                                 <th>Date</th>
+                                <th>Action</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php if (count($customerCredits) === 0): ?>
                                 <tr>
-                                    <td colspan="8" style="text-align:center; padding: 20px;">
+                                    <td colspan="9" style="text-align:center; padding: 20px;">
                                         <i class="fa-solid fa-check-circle"></i> No outstanding customer debts
                                     </td>
                                 </tr>
@@ -3791,6 +3805,15 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                         <td><?= $creditDueDate !== '' ? e(date('M d, Y', strtotime($creditDueDate))) : '<span style="color:#6b7280;">N/A</span>' ?></td>
                                         <td><span class="status-badge <?= e($statusClass) ?>"><?= e($statusText) ?></span></td>
                                         <td><?= date('M d, Y H:i', strtotime((string) ($credit['created_at'] ?? 'now'))) ?></td>
+                                        <td>
+                                            <?php if ($creditOutstanding > 0): ?>
+                                                <button class="btn-icon" data-action="receiveCustomerPayment" data-value="<?= (int) ($credit['customer_id'] ?? 0) ?>" title="Receive Payment">
+                                                    <i class="fa-solid fa-money-bill-wave"></i>
+                                                </button>
+                                            <?php else: ?>
+                                                <span class="status-badge success">Paid</span>
+                                            <?php endif; ?>
+                                        </td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php endif; ?>
@@ -3811,7 +3834,7 @@ function buildProductRowsFromXlsx(string $xlsxFilePath): array
                                     <p>Fast checkout with full product visibility</p>
                                 </div>
                                 <div class="sales-products-stats">
-                                    <span><i class="fa-solid fa-boxes-stacked"></i> <?= moneyFormat(count($saleProductOptions)) ?> Products</span>
+                                    <span><i class="fa-solid fa-boxes-stacked"></i> <?= moneyFormat($inventoryProductCount) ?> Products</span>
                                     <span><i class="fa-solid fa-circle-check"></i> <strong id="salesVisibleCount"><?= moneyFormat(count($saleProductOptions)) ?></strong> Visible</span>
                                 </div>
                             </div>

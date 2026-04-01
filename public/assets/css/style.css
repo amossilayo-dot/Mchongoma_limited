@@ -2150,6 +2150,7 @@ body {
 .sales-search-wrap {
   position: relative;
   margin-bottom: 12px;
+  flex: 0 0 auto;
 }
 
 .sales-search-wrap i {
@@ -2185,6 +2186,9 @@ body {
   gap: 8px;
   overflow-x: auto;
   padding-bottom: 4px;
+  flex: 0 0 auto;
+  min-height: 34px;
+  align-items: center;
 }
 
 .sales-chip {
@@ -2211,6 +2215,8 @@ body {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
 }
@@ -3818,6 +3824,7 @@ body {
   max-width: 560px;
   border: 1px solid #cad7ea;
   box-shadow: 0 28px 46px rgba(13, 20, 41, 0.35);
+  overflow: visible;
 }
 
 .modal.modal-checkout .modal-footer {
@@ -3827,6 +3834,9 @@ body {
 .modal.modal-checkout .modal-body {
   padding: 14px 18px 18px;
   background: linear-gradient(170deg, #f7faff 0%, #eef3fa 100%);
+  max-height: calc(90vh - 92px);
+  overflow-y: auto;
+  overflow-x: visible;
 }
 
 .modal.modal-checkout .modal-header {
@@ -3845,6 +3855,19 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow: visible;
+}
+
+.modal.modal-checkout #checkoutCustomerSelect {
+  background: #ffffff;
+  color: #111827;
+  position: relative;
+  z-index: 3;
+}
+
+.modal.modal-checkout #checkoutCustomerSelect option {
+  background: #ffffff;
+  color: #111827;
 }
 
 .sales-checkout-items {

@@ -4482,6 +4482,9 @@ function initSalesPage() {
         (customer, index) => index !== existingWalkInIndex,
       ),
     ];
+    const nonWalkInCustomers = checkoutCustomers.filter(
+      (customer) => customer.id !== walkInCustomer.id,
+    );
 
     const customerOptions =
       checkoutCustomers.length > 0
@@ -4552,7 +4555,9 @@ function initSalesPage() {
 
                 <div class="form-group">
                     <label><i class="fa-regular fa-circle-user"></i> Customer</label>
+                  <input type="text" id="checkoutCustomerSearch" placeholder="Search customer..." autocomplete="off">
                     <select id="checkoutCustomerSelect" name="customer_id" required>${customerOptions}</select>
+                    <small id="checkoutCreditCustomerHint" style="display:none; color:#b45309; margin-top:6px;">Pay Later requires a named customer (not Walk-in Customer).</small>
                 </div>
 
                 <div class="sales-checkout-items" id="checkoutItemsWrap">${cartLines}</div>
@@ -4598,7 +4603,13 @@ function initSalesPage() {
     openModal("Checkout", content, [], { modalClass: "modal-checkout" });
 
     const form = document.getElementById("salesCheckoutForm");
+    const customerSearchInput = document.getElementById(
+      "checkoutCustomerSearch",
+    );
     const customerSelect = document.getElementById("checkoutCustomerSelect");
+    const creditCustomerHint = document.getElementById(
+      "checkoutCreditCustomerHint",
+    );
     const gatewayInput = document.getElementById("checkoutGateway");
     const methodInput = document.getElementById("checkoutPaymentMethod");
     const providerInput = document.getElementById("checkoutMobileProvider");
@@ -4626,6 +4637,45 @@ function initSalesPage() {
         product_id: Number(item.id),
         quantity: item.qty,
       }));
+
+    const renderCheckoutCustomerOptions = (searchTerm = "") => {
+      if (!customerSelect) {
+        return;
+      }
+
+      const selectedId = (customerSelect.value || walkInCustomer.id || "")
+        .toString()
+        .trim();
+      const term = (searchTerm || "").toLowerCase().trim();
+      const filtered = checkoutCustomers.filter((customer) => {
+        const name = (customer.name || "").toLowerCase();
+        const id = (customer.id || "").toLowerCase();
+        return term === "" || name.includes(term) || id.includes(term);
+      });
+
+      if (filtered.length === 0) {
+        customerSelect.innerHTML =
+          '<option value="">No customer found</option>';
+        customerSelect.value = "";
+        customerSelect.disabled = true;
+        return;
+      }
+
+      customerSelect.disabled = false;
+      customerSelect.innerHTML = filtered
+        .map(
+          (customer) =>
+            `<option value="${escapeHtml(customer.id)}">${escapeHtml(customer.name)}</option>`,
+        )
+        .join("");
+
+      const hasPreviousSelection = filtered.some(
+        (customer) => customer.id === selectedId,
+      );
+      customerSelect.value = hasPreviousSelection
+        ? selectedId
+        : filtered[0].id || "";
+    };
 
     const recalcCheckoutTotals = () => {
       const discount = Math.max(
@@ -4668,8 +4718,19 @@ function initSalesPage() {
         creditNoteGroup.style.display = isCredit ? "block" : "none";
       if (creditDueDateGroup)
         creditDueDateGroup.style.display = isCredit ? "block" : "none";
+      if (creditCustomerHint) {
+        creditCustomerHint.style.display = isCredit ? "block" : "none";
+      }
       if (creditDueDateInput) creditDueDateInput.required = isCredit;
       if (mobilePhoneInput) mobilePhoneInput.required = isMobile && !isCredit;
+
+      if (isCredit && customerSelect) {
+        const selectedCustomerId = (customerSelect.value || "").trim();
+        const isWalkInSelected = selectedCustomerId === walkInCustomer.id;
+        if (isWalkInSelected && nonWalkInCustomers.length > 0) {
+          customerSelect.value = nonWalkInCustomers[0].id;
+        }
+      }
 
       paymentGrid?.querySelectorAll(".sales-payment-tile").forEach((tile) => {
         tile.classList.toggle(
@@ -4687,6 +4748,10 @@ function initSalesPage() {
       customerSelect.value = walkInCustomer.id;
     }
 
+    customerSearchInput?.addEventListener("input", () => {
+      renderCheckoutCustomerOptions(customerSearchInput.value);
+    });
+
     paymentGrid?.addEventListener("click", (event) => {
       const tile = event.target.closest(".sales-payment-tile");
       if (!tile) {
@@ -4697,7 +4762,20 @@ function initSalesPage() {
 
     discountInput?.addEventListener("input", recalcCheckoutTotals);
 
-    form?.addEventListener("submit", () => {
+    form?.addEventListener("submit", (event) => {
+      const isCredit =
+        (gatewayInput?.value || "").toLowerCase() === "pay_later";
+      const selectedCustomerId = (customerSelect?.value || "").trim();
+      if (isCredit && selectedCustomerId === walkInCustomer.id) {
+        event.preventDefault();
+        showToast(
+          "warning",
+          "Pay Later requires a named customer. Please select a customer.",
+        );
+        customerSelect?.focus();
+        return;
+      }
+
       if (submitBtn) {
         submitBtn.disabled = true;
         submitBtn.textContent = "Processing...";
@@ -4706,6 +4784,7 @@ function initSalesPage() {
 
     setGateway(defaultGateway);
     recalcCheckoutTotals();
+    renderCheckoutCustomerOptions("");
   };
 
   const addProduct = (id, name, price) => {
