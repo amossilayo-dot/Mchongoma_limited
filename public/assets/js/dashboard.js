@@ -486,6 +486,123 @@ const I18N_TEXT = {
     "Uuzaji umeundwa vizuri. Stoo imepunguzwa kwa ",
   " items (qty ": " bidhaa (idadi ",
   Updated: "Imesasishwa",
+  "No matching products": "Hakuna bidhaa zinazolingana",
+  "No page permissions available.": "Hakuna ruhusa za kurasa zilizopo.",
+  "Invalid user ID": "Kitambulisho cha mtumiaji si sahihi",
+  "Invalid expense ID": "Kitambulisho cha matumizi si sahihi",
+  "Please select a supplier.": "Tafadhali chagua msambazaji.",
+  "Add at least one receiving item.": "Ongeza angalau bidhaa moja ya mapokezi.",
+  "Receiving total must be greater than zero.":
+    "Jumla ya mapokezi lazima iwe zaidi ya sifuri.",
+  "Selected supplier must match the linked purchase order supplier.":
+    "Msambazaji aliyechaguliwa lazima alingane na msambazaji wa oda iliyounganishwa.",
+  "Select a valid product from the search list.":
+    "Chagua bidhaa sahihi kutoka orodha ya utafutaji.",
+  "A purchase order must have at least one item.":
+    "Oda ya manunuzi lazima iwe na angalau bidhaa moja.",
+  "Add at least one valid PO item.": "Ongeza angalau bidhaa moja sahihi ya PO.",
+  "PO amount must be greater than zero.":
+    "Kiasi cha PO lazima kiwe zaidi ya sifuri.",
+  "PO items must produce a valid calculated total.":
+    "Bidhaa za PO lazima zitoe jumla sahihi iliyohesabiwa.",
+  "Add at least one product to continue.":
+    "Ongeza angalau bidhaa moja ili kuendelea.",
+  "Only administrators can edit products.":
+    "Wasimamizi pekee wanaweza kuhariri bidhaa.",
+  "Invalid product ID": "Kitambulisho cha bidhaa si sahihi",
+  "Product not found": "Bidhaa haijapatikana",
+  "Only administrators can delete products.":
+    "Wasimamizi pekee wanaweza kufuta bidhaa.",
+  "Invalid receiving ID": "Kitambulisho cha mapokezi si sahihi",
+  "Receiving record not found": "Rekodi ya mapokezi haijapatikana",
+  "Invalid delivery ID": "Kitambulisho cha uwasilishaji si sahihi",
+  "Invalid delivery status": "Hali ya uwasilishaji si sahihi",
+  "Invalid receiving status": "Hali ya mapokezi si sahihi",
+  "Invalid invoice ID": "Kitambulisho cha ankara si sahihi",
+  "Invalid invoice status": "Hali ya ankara si sahihi",
+  "Invalid supplier ID": "Kitambulisho cha msambazaji si sahihi",
+  "Invalid customer ID": "Kitambulisho cha mteja si sahihi",
+  "Customer not found": "Mteja hakupatikana",
+  "Invalid purchase order ID": "Kitambulisho cha oda ya manunuzi si sahihi",
+  "Invalid purchase order status": "Hali ya oda ya manunuzi si sahihi",
+  "Invalid credit ID": "Kitambulisho cha deni si sahihi",
+  "Credit record not found": "Rekodi ya deni haijapatikana",
+  "No linked sale found for this debt.":
+    "Hakuna uuzaji uliounganishwa uliopatikana kwa deni hili.",
+  "Invalid product line": "Mstari wa bidhaa si sahihi",
+  "Invalid debt record": "Rekodi ya deni si sahihi",
+  "Debt record not found": "Rekodi ya deni haijapatikana",
+  "No products available to add.": "Hakuna bidhaa za kuongeza.",
+  "Select a product first.": "Chagua bidhaa kwanza.",
+  "Selected product is out of stock.": "Bidhaa iliyochaguliwa imeisha stoo.",
+  "Invalid product selected.": "Bidhaa iliyochaguliwa si sahihi.",
+  "Invalid quotation ID": "Kitambulisho cha nukuu si sahihi",
+  "Invalid appointment ID": "Kitambulisho cha miadi si sahihi",
+  "Invalid appointment status": "Hali ya miadi si sahihi",
+  "Invalid return ID": "Kitambulisho cha rejesho si sahihi",
+  "Invalid return status": "Hali ya rejesho si sahihi",
+  "Purchase order data is unavailable for printing.":
+    "Data ya oda ya manunuzi haipatikani kwa uchapishaji.",
+  "Pop-up blocked. Enable pop-ups to print PO.":
+    "Dirisha ibukizi limezuiwa. Ruhusu madirisha ibukizi kuchapisha PO.",
+  "Please add at least one customer first.":
+    "Tafadhali ongeza angalau mteja mmoja kwanza.",
+  "Quotation data is unavailable for printing.":
+    "Data ya nukuu haipatikani kwa uchapishaji.",
+  "Invoice data is unavailable for printing.":
+    "Data ya ankara haipatikani kwa uchapishaji.",
+  "Pop-up blocked. Enable pop-ups to print.":
+    "Dirisha ibukizi limezuiwa. Ruhusu madirisha ibukizi kuchapisha.",
+  "Popup blocked. Please allow popups and try again.":
+    "Dirisha ibukizi limezuiwa. Tafadhali ruhusu madirisha ibukizi na ujaribu tena.",
+  "Opening report for print...": "Inafungua ripoti kwa uchapishaji...",
+  "Please add at least one customer before creating an invoice.":
+    "Tafadhali ongeza angalau mteja mmoja kabla ya kuunda ankara.",
+  "Please add at least one customer before creating a delivery.":
+    "Tafadhali ongeza angalau mteja mmoja kabla ya kuunda uwasilishaji.",
+  "Please add at least one customer before creating a quotation.":
+    "Tafadhali ongeza angalau mteja mmoja kabla ya kuunda nukuu.",
+  "Please add an active supplier before creating a purchase order.":
+    "Tafadhali ongeza msambazaji aliye hai kabla ya kuunda oda ya manunuzi.",
+  "Please add at least one product in inventory before creating a purchase order.":
+    "Tafadhali ongeza angalau bidhaa moja kwenye hesabu kabla ya kuunda oda ya manunuzi.",
+  "Please add at least one product in Inventory before recording a return.":
+    "Tafadhali ongeza angalau bidhaa moja kwenye hesabu kabla ya kurekodi rejesho.",
+  "Pop-up blocked. Enable pop-ups to print receipt.":
+    "Dirisha ibukizi limezuiwa. Ruhusu madirisha ibukizi kuchapisha risiti.",
+  "Name, email, password, and role are required.":
+    "Jina, barua pepe, nenosiri, na jukumu vinahitajika.",
+  "Please provide a valid user email address.":
+    "Tafadhali weka anwani sahihi ya barua pepe ya mtumiaji.",
+  "Password must be at least 8 characters long.":
+    "Nenosiri lazima liwe na angalau herufi 8.",
+  "A user with this email already exists.":
+    "Mtumiaji mwenye barua pepe hii tayari yupo.",
+  "Only administrators can add products.":
+    "Wasimamizi pekee wanaweza kuongeza bidhaa.",
+  "Only administrators can import products.":
+    "Wasimamizi pekee wanaweza kuingiza bidhaa.",
+  "Select product": "Chagua bidhaa",
+  Cashier: "Keshia",
+  "Thank you for your purchase!": "Asante kwa manunuzi yako!",
+  "Receipt #": "Risiti #",
+  "Paid via": "Imelipwa kwa",
+  "*** Thank you, come again! ***": "*** Asante, karibu tena! ***",
+  "Purchase Order Details": "Maelezo ya Oda ya Manunuzi",
+  "No PO items": "Hakuna bidhaa za PO",
+  "No PO items recorded.": "Hakuna bidhaa za PO zilizorekodiwa.",
+  "Purchase Order": "Oda ya Manunuzi",
+  "PO No": "Namba ya PO",
+  "PO No:": "Namba ya PO:",
+  Supplier: "Msambazaji",
+  "Expected Delivery": "Uwasilishaji Unaotarajiwa",
+  "Expected Delivery:": "Uwasilishaji Unaotarajiwa:",
+  Notes: "Maelezo",
+  "*** Generated by Mchongoma POS ***": "*** Imetolewa na Mchongoma POS ***",
+  "*** Quotation generated by Mchongoma POS ***":
+    "*** Nukuu imetolewa na Mchongoma POS ***",
+  "*** Statement generated by Mchongoma POS ***":
+    "*** Taarifa imetolewa na Mchongoma POS ***",
   "N/A": "Hakuna",
 };
 
@@ -603,6 +720,34 @@ function applyLanguage(targetLang) {
     );
   });
 
+  document
+    .querySelectorAll(
+      'input[type="button"][value], input[type="submit"][value], input[type="reset"][value], button[value]',
+    )
+    .forEach((el) => {
+      if (!el.dataset.i18nValue) {
+        el.dataset.i18nValue = el.getAttribute("value") || "";
+      }
+
+      const source = el.dataset.i18nValue || "";
+      el.setAttribute(
+        "value",
+        targetLang === "sw" ? translateValue(source, "sw") : source,
+      );
+    });
+
+  document.querySelectorAll("[aria-label]").forEach((el) => {
+    if (!el.dataset.i18nAriaLabel) {
+      el.dataset.i18nAriaLabel = el.getAttribute("aria-label") || "";
+    }
+
+    const source = el.dataset.i18nAriaLabel || "";
+    el.setAttribute(
+      "aria-label",
+      targetLang === "sw" ? translateValue(source, "sw") : source,
+    );
+  });
+
   if (!window.__i18nOriginalTitle) {
     window.__i18nOriginalTitle = document.title;
   }
@@ -644,6 +789,7 @@ function initLanguage() {
 
 document.addEventListener("DOMContentLoaded", function () {
   initLanguage();
+  initExportLanguageLinks();
   initActionBindings();
   initClock();
   initChart();
@@ -655,6 +801,28 @@ document.addEventListener("DOMContentLoaded", function () {
   initSecurityLogsFilters();
   initSalesPage();
 });
+
+function initExportLanguageLinks() {
+  const lang = getCurrentLanguage();
+  document
+    .querySelectorAll(
+      'a[href^="export_report_pdf.php"], a[href^="export_report_csv.php"], a[href^="export_report_xlsx.php"]',
+    )
+    .forEach((link) => {
+      const href = link.getAttribute("href") || "";
+      if (href === "") {
+        return;
+      }
+
+      const parts = href.split("#");
+      const pathAndQuery = parts[0] || "";
+      const hash = parts.length > 1 ? `#${parts.slice(1).join("#")}` : "";
+      const [path, query = ""] = pathAndQuery.split("?");
+      const params = new URLSearchParams(query);
+      params.set("lang", lang);
+      link.setAttribute("href", `${path}?${params.toString()}${hash}`);
+    });
+}
 
 // ============================================
 // REAL-TIME CLOCK
@@ -3884,7 +4052,8 @@ function showEndOfDayReport() {
   const mobileMoney = Number.parseFloat(summary.mobileMoney || 0) || 0;
 
   const now = new Date();
-  const dateStr = now.toLocaleDateString("en-US", {
+  const dateLocale = getCurrentLanguage() === "sw" ? "sw-TZ" : "en-US";
+  const dateStr = now.toLocaleDateString(dateLocale, {
     weekday: "long",
     year: "numeric",
     month: "long",
@@ -4436,6 +4605,9 @@ function initSalesPage() {
       return;
     }
 
+    const isSw = getCurrentLanguage() === "sw";
+    const t = (value) => (isSw ? translateValue(value, "sw") : value);
+
     const txNo = escapeHtml(receipt.transaction_no || "N/A");
     const displayReceiptNo = /^TXN-/i.test(receipt.transaction_no || "")
       ? escapeHtml(
@@ -4444,8 +4616,8 @@ function initSalesPage() {
           ).replace(/\s+/g, ""),
         )
       : txNo;
-    const customer = escapeHtml(receipt.customer_name || "Walk-in Customer");
-    const cashier = escapeHtml(receipt.cashier_name || "Cashier");
+    const customer = escapeHtml(receipt.customer_name || t("Walk-in Customer"));
+    const cashier = escapeHtml(receipt.cashier_name || t("Cashier"));
     const paymentMethod = escapeHtml(receipt.payment_method || "Cash");
     const createdAtRaw = String(receipt.created_at || "");
     const createdAtDate = createdAtRaw
@@ -4485,7 +4657,7 @@ function initSalesPage() {
           <div class="sales-receipt-line">
             <span class="sales-receipt-line-main">
               <strong>${name} x ${qty}</strong>
-              <small>Tsh ${eachPrice} each</small>
+                  <small>Tsh ${eachPrice} ${escapeHtml(t("each"))}</small>
             </span>
             <strong>Tsh ${lineTotal}</strong>
           </div>
@@ -4496,21 +4668,21 @@ function initSalesPage() {
     const content = `
             <div class="sales-receipt-sheet" id="salesReceiptSheet">
                 <div class="sales-receipt-brand">Mchongoma Limited</div>
-                <div class="sales-receipt-subtitle">Thank you for your purchase!</div>
+                <div class="sales-receipt-subtitle">${escapeHtml(t("Thank you for your purchase!"))}</div>
                 <div class="sales-receipt-time">${createdAt}</div>
                 <div class="sales-receipt-meta">
-                    <div><span>Receipt #</span><strong>${displayReceiptNo}</strong></div>
-                    <div><span>Customer</span><strong>${customer}</strong></div>
-                    <div><span>Cashier</span><strong>${cashier}</strong></div>
+                    <div><span>${escapeHtml(t("Receipt #"))}</span><strong>${displayReceiptNo}</strong></div>
+                    <div><span>${escapeHtml(t("Customer"))}</span><strong>${customer}</strong></div>
+                    <div><span>${escapeHtml(t("Cashier"))}</span><strong>${cashier}</strong></div>
                 </div>
                 <div class="sales-receipt-items">${itemsHtml}</div>
                 <div class="sales-receipt-totals">
                     <div><span>Subtotal</span><strong>Tsh ${subtotal}</strong></div>
                     <div><span>Tax</span><strong>Tsh ${tax}</strong></div>
-                    <div class="sales-receipt-total"><span>TOTAL</span><strong>Tsh ${total}</strong></div>
-                    <div><span>Paid via</span><strong>${paymentMethod}</strong></div>
+                    <div class="sales-receipt-total"><span>${escapeHtml(t("Total"))}</span><strong>Tsh ${total}</strong></div>
+                    <div><span>${escapeHtml(t("Paid via"))}</span><strong>${paymentMethod}</strong></div>
                 </div>
-                <p class="sales-receipt-thanks">*** Thank you, come again! ***</p>
+                  <p class="sales-receipt-thanks">${escapeHtml(t("*** Thank you, come again! ***"))}</p>
             </div>
         `;
 
@@ -4538,7 +4710,7 @@ function initSalesPage() {
       printWindow.document.write(`
                 <html>
                     <head>
-                        <title>Receipt ${displayReceiptNo}</title>
+                        <title>${escapeHtml(t("Receipt"))} ${displayReceiptNo}</title>
                         <style>
                   body{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; padding:16px; color:#111827; background:#f5f7fb;}
                   .sales-receipt-sheet{max-width:360px; margin:0 auto; border:1px solid #cfd8e6; border-radius:10px; padding:12px 11px; background:linear-gradient(180deg, #ffffff 0%, #f8faff 100%);}
@@ -7208,6 +7380,7 @@ function printPurchaseOrderReceipt(details) {
       : '<div class="sales-receipt-line"><span class="sales-receipt-line-main"><strong>No PO items</strong></span><strong>-</strong></div>';
 
   const finalTotal = parsedAmount > 0 ? parsedAmount : computedTotal;
+  const isSw = getCurrentLanguage() === "sw";
 
   const sheetHtml = `
     <div class="sales-receipt-sheet" id="purchaseOrderReceiptSheet">
@@ -7228,6 +7401,7 @@ function printPurchaseOrderReceipt(details) {
       <p class="sales-receipt-thanks">*** Generated by Mchongoma POS ***</p>
     </div>
   `;
+  const printableSheetHtml = isSw ? translateValue(sheetHtml, "sw") : sheetHtml;
 
   const printWindow = window.open("", "_blank", "width=420,height=760");
   if (!printWindow) {
@@ -7245,7 +7419,7 @@ function printPurchaseOrderReceipt(details) {
   printWindow.document.write(`
     <html>
       <head>
-        <title>Purchase Order ${escapeHtml(poNo)}</title>
+        <title>${escapeHtml(isSw ? translateValue("Purchase Order", "sw") : "Purchase Order")} ${escapeHtml(poNo)}</title>
         <style>
           body{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; padding:16px; color:#111827; background:#f5f7fb;}
           .sales-receipt-sheet{max-width:360px; margin:0 auto; border:1px solid #cfd8e6; border-radius:10px; padding:12px 11px; background:linear-gradient(180deg, #ffffff 0%, #f8faff 100%);}
@@ -7263,7 +7437,7 @@ function printPurchaseOrderReceipt(details) {
           .sales-receipt-thanks{text-align:center; margin-top:12px; font-size:12px; color:#5f6f86;}
         </style>
       </head>
-      <body>${sheetHtml}</body>
+      <body>${printableSheetHtml}</body>
     </html>
   `);
   printWindow.document.close();
@@ -7933,6 +8107,8 @@ function printReceipt(transactionNo) {
 }
 
 function printEndOfDaySummary(summary) {
+  const isSw = getCurrentLanguage() === "sw";
+  const t = (value) => (isSw ? translateValue(value, "sw") : value);
   const dateLabel = String(summary?.dateLabel || "");
   const totalSales = Number.parseFloat(summary?.totalSales || 0) || 0;
   const transactions = Number.parseInt(summary?.transactions || 0, 10) || 0;
@@ -7953,10 +8129,10 @@ function printEndOfDaySummary(summary) {
 
   const printableHtml = `
     <!doctype html>
-    <html lang="en">
+    <html lang="${isSw ? "sw" : "en"}">
       <head>
         <meta charset="utf-8">
-        <title>End of Day Report</title>
+        <title>${escapeHtml(t("End of Day Report"))}</title>
         <style>
           body { font-family: Arial, sans-serif; color: #111827; margin: 24px; }
           h1 { margin: 0 0 6px 0; font-size: 22px; }
@@ -7969,23 +8145,23 @@ function printEndOfDaySummary(summary) {
         </style>
       </head>
       <body>
-        <h1>End of Day Report</h1>
+        <h1>${escapeHtml(t("End of Day Report"))}</h1>
         <p class="date">${escapeHtml(dateLabel)}</p>
         <div class="grid">
           <div class="card">
-            <p class="label">Total Sales</p>
+            <p class="label">${escapeHtml(t("Total Sales"))}</p>
             <p class="value">Tsh ${formatMoney(totalSales)}</p>
           </div>
           <div class="card">
-            <p class="label">Transactions</p>
+            <p class="label">${escapeHtml(t("Transactions"))}</p>
             <p class="value">${transactions}</p>
           </div>
           <div class="card">
-            <p class="label">Cash</p>
+            <p class="label">${escapeHtml(t("Cash"))}</p>
             <p class="value">Tsh ${formatMoney(cash)}</p>
           </div>
           <div class="card">
-            <p class="label">Mobile Money</p>
+            <p class="label">${escapeHtml(t("Mobile Money"))}</p>
             <p class="value">Tsh ${formatMoney(mobileMoney)}</p>
           </div>
         </div>
